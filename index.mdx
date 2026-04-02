@@ -1,97 +1,64 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: "ElastomerClient"
+description: "A low-level Ruby client for Elasticsearch — simple, direct, and faithful to the API."
 ---
 
-## Setting up
+ElastomerClient is a Ruby gem that provides a one-to-one mapping of the Elasticsearch HTTP API. It gives you direct access to every Elasticsearch endpoint without abstractions getting in the way, so your application code stays in control.
 
-Get your documentation site up and running in minutes.
-
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
-
-## Make it yours
-
-Design a docs site that looks great and empowers your users.
-
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Install the gem and run your first Elasticsearch query in minutes.
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="Configuration" icon="gear" href="/configuration">
+    Configure timeouts, adapters, authentication, and compression.
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="Core API" icon="code" href="/api/client">
+    Explore the full client API: indexes, documents, cluster, and nodes.
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="Bulk Indexing" icon="layer-group" href="/advanced/bulk-indexing">
+    Index large datasets efficiently with the bulk API and streaming support.
   </Card>
-</Columns>
+</CardGroup>
 
-## Create beautiful pages
+## What ElastomerClient does
 
-Everything you need to create world-class documentation.
+ElastomerClient wraps the Elasticsearch HTTP API in idiomatic Ruby. Each major API area maps to a dedicated class, so you can work with indexes, documents, and cluster state through a clean, consistent interface.
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
-  </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
-  </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
+<Steps>
+  <Step title="Install the gem">
+    Add `elastomer-client` to your `Gemfile` and run `bundle install`.
+  </Step>
+  <Step title="Connect to Elasticsearch">
+    Create a client pointing at your Elasticsearch cluster — local or remote.
+  </Step>
+  <Step title="Work with your data">
+    Create indexes, index documents, run searches, and manage your cluster.
+  </Step>
+</Steps>
 
-## Need inspiration?
+## Explore the API
 
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+<CardGroup cols={2}>
+  <Card title="Index management" icon="database" href="/api/index">
+    Create, configure, and delete Elasticsearch indexes and their mappings.
+  </Card>
+  <Card title="Document operations" icon="file-lines" href="/api/docs">
+    Index, retrieve, search, update, and delete documents.
+  </Card>
+  <Card title="Cluster management" icon="server" href="/api/cluster">
+    Monitor health, inspect state, and manage cluster-wide settings.
+  </Card>
+  <Card title="Snapshots" icon="floppy-disk" href="/operations/snapshots">
+    Back up and restore indexes with the snapshot and restore API.
+  </Card>
+  <Card title="Multi-search" icon="magnifying-glass" href="/advanced/multi-search">
+    Execute multiple searches in a single round trip.
+  </Card>
+  <Card title="Cross-cluster replication" icon="arrows-rotate" href="/operations/ccr">
+    Set up follower indexes that replicate data from remote clusters.
+  </Card>
+</CardGroup>
+
+<Note>
+ElastomerClient requires Ruby 3.2 and is tested against Elasticsearch 5.6 and 8.x. See [compatibility](/introduction) for details.
+</Note>

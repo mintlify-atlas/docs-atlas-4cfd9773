@@ -1,0 +1,196 @@
+---
+title: "Reindex"
+description: "Copy documents from one index to another using the Reindex API"
+---
+
+The Reindex API copies documents from a source index into a destination index entirely on the server side. No documents need to flow through your application, making it the most efficient approach for index migrations, schema changes, and data reshaping.
+
+## Accessing the reindex object
+
+`client.reindex` returns a `Reindex` instance. All reindex operations are called on this object:
+
+```ruby
+reindex = client.reindex
+```
+
+## Basic reindex
+
+Call `reindex.reindex(body, params)` with a request body describing the source and destination:
+
+```ruby
+reindex = client.reindex
+
+response = reindex.reindex({
+  source: { index: "books-v1" },
+  dest:   { index: "books-v2" }
+})
+
+puts response["total"]   # => 10000
+puts response["created"] # => 10000
+puts response["failures"] # => []
+```
+
+## Request body structure
+
+<ParamField body="source" type="object" required>
+  Describes where to read documents from.
+
+  - **index** (string, required) — source index name or comma-separated list of indices.
+  - **query** (object) — optional Elasticsearch query to filter which documents are copied.
+  - **size** (number) — batch size per scroll (default: 1000).
+  - **_source** (string | array) — field selection; pass `false` to copy only metadata.
+</ParamField>
+
+<ParamField body="dest" type="object" required>
+  Describes where to write documents to.
+
+  - **index** (string, required) — destination index name. Must exist before reindexing.
+  - **op_type** (string) — `"index"` (default, overwrites) or `"create"` (skips existing docs).
+  - **pipeline** (string) — name of an ingest pipeline to run documents through.
+</ParamField>
+
+<ParamField body="conflicts" type="string" default='"abort"'>
+  Set to `"proceed"` to count conflicts and continue rather than aborting on the first version conflict.
+</ParamField>
+
+<ParamField body="script" type="object">
+  An inline Painless script to transform documents during reindex.
+
+  ```ruby
+  reindex.reindex({
+    source: { index: "books-v1" },
+    dest:   { index: "books-v2" },
+    script: {
+      source: "ctx._source.tags = ctx._source.remove('categories')",
+      lang:   "painless"
+    }
+  })
+  ```
+</ParamField>
+
+## Reindex with a query filter
+
+Copy only a subset of documents by specifying a query in `source`:
+
+```ruby
+response = client.reindex.reindex({
+  source: {
+    index: "books-v1",
+    query: {
+      range: { published_year: { gte: 2000 } }
+    }
+  },
+  dest: { index: "books-v2-modern" }
+})
+
+puts "Copied: #{response["created"]}"
+```
+
+## Asynchronous reindex
+
+For large indices, run the reindex in the background by passing `wait_for_completion: false`. Elasticsearch returns a task ID immediately:
+
+```ruby
+response = client.reindex.reindex(
+  {
+    source: { index: "logs-2024" },
+    dest:   { index: "logs-2024-reindexed" }
+  },
+  wait_for_completion: false
+)
+
+task_id = response["task"]
+puts "Reindex running as task: #{task_id}"
+# => "DmteLdw1QmSgW3GZmjmoKA:12345"
+```
+
+<Note>
+  The task ID is in the format `node_id:task_id`. Use the [Tasks API](/advanced/tasks) to monitor its progress.
+</Note>
+
+### Polling task status
+
+```ruby
+node_id, task_id = task_id_string.split(":")
+task_id = task_id.to_i
+
+tasks = client.tasks
+loop do
+  result = tasks.get_by_id(node_id, task_id)
+  status = result.dig("task", "status")
+
+  total   = status["total"]
+  created = status["created"]
+  puts "Progress: #{created}/#{total}"
+
+  break unless result["completed"] == false
+  sleep 5
+end
+
+puts "Reindex complete"
+```
+
+## Rethrottling
+
+Limit the reindex speed after it has started to reduce cluster load, or increase it to finish faster:
+
+```ruby
+# Slow down to 100 docs/sec (task_id is the full "node:id" string)
+client.reindex.rethrottle(task_id, requests_per_second: 100)
+
+# Remove the throttle — run as fast as possible
+client.reindex.rethrottle(task_id, requests_per_second: -1)
+```
+
+<Warning>
+  Rethrottling to a higher rate takes effect immediately. Slowing down takes effect at the next scroll batch, so it may not apply instantly.
+</Warning>
+
+## Complete example
+
+```ruby
+require "elastomer_client"
+
+client  = ElastomerClient::Client.new(url: "http://localhost:9200")
+reindex = client.reindex
+
+# Kick off an async reindex of only recent books, transforming data in-flight
+response = reindex.reindex(
+  {
+    source: {
+      index: "books-v1",
+      query: { range: { year: { gte: 2010 } } }
+    },
+    dest: {
+      index:   "books-v2",
+      op_type: "create"       # skip docs that already exist in the destination
+    },
+    script: {
+      source: "ctx._source.schema_version = 2",
+      lang:   "painless"
+    },
+    conflicts: "proceed"
+  },
+  wait_for_completion: false
+)
+
+task_id        = response["task"]
+node_id, tid   = task_id.split(":")
+tid            = tid.to_i
+tasks          = client.tasks
+
+puts "Reindex task started: #{task_id}"
+
+loop do
+  info   = tasks.get_by_id(node_id, tid)
+  status = info.dig("task", "status") || {}
+
+  puts "  created=#{status["created"]} updated=#{status["updated"]} " \
+       "total=#{status["total"]} conflicts=#{status["version_conflicts"]}"
+
+  break if info["completed"]
+  sleep 10
+end
+
+puts "Done."
+```

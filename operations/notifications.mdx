@@ -1,0 +1,306 @@
+---
+title: "Notifications"
+description: "Instrument Elasticsearch requests using ActiveSupport notifications"
+---
+
+ElastomerClient has an optional notifications layer built on [ActiveSupport::Notifications](https://api.rubyonrails.org/classes/ActiveSupport/Notifications.html). When enabled, every Elasticsearch request emits an instrumentation event that you can subscribe to for logging, performance monitoring, distributed tracing, and APM integration.
+
+## Enabling notifications
+
+Notifications are **not active by default**. Require the notifications module after requiring the gem:
+
+```ruby
+require 'elastomer_client'
+require 'elastomer_client/notifications'
+```
+
+Once required, all subsequent Elasticsearch requests made through `ElastomerClient::Client` will emit `'request.client.elastomer'` events.
+
+---
+
+## Subscribing to events
+
+Use `ActiveSupport::Notifications.subscribe` with the event name `'request.client.elastomer'`:
+
+```ruby
+require 'elastomer_client/notifications'
+
+ActiveSupport::Notifications.subscribe('request.client.elastomer') do |name, start_time, end_time, _, payload|
+  duration = end_time - start_time
+  $stderr.puts '[%s] %s %s (%.3f)' % [payload[:status], payload[:index], payload[:action], duration]
+end
+```
+
+The block receives five arguments:
+
+| Argument | Description |
+|---|---|
+| `name` | The event name — always `'request.client.elastomer'` |
+| `start_time` | `Time` object for when the request started |
+| `end_time` | `Time` object for when the request completed |
+| `_` | Unique event ID (rarely needed) |
+| `payload` | Hash containing request and response metadata |
+
+---
+
+## Payload fields
+
+<ParamField body="index" type="String">
+  The Elasticsearch index name involved in the request, if any. `nil` for cluster-level operations.
+</ParamField>
+
+<ParamField body="type" type="String">
+  The document type, if any. Typically `nil` in modern Elasticsearch versions.
+</ParamField>
+
+<ParamField body="action" type="String">
+  A dot-namespaced string identifying what operation was performed, e.g. `"docs.search"`, `"index.create"`, `"snapshot.create"`. See the full list of valid actions below.
+</ParamField>
+
+<ParamField body="url" type="URI">
+  The full request URI object, populated after the request completes.
+</ParamField>
+
+<ParamField body="method" type="Symbol">
+  The HTTP method used: `:head`, `:get`, `:put`, `:post`, or `:delete`.
+</ParamField>
+
+<ParamField body="status" type="Integer">
+  The HTTP response status code, e.g. `200`, `404`, `503`.
+</ParamField>
+
+<ParamField body="context" type="Object">
+  Custom metadata passed through from the call site via the `:context` parameter. Useful for correlating events back to application-level context such as a request ID, user ID, or calling method name.
+</ParamField>
+
+<ParamField body="request_body" type="String">
+  The serialized request body sent to Elasticsearch.
+</ParamField>
+
+<ParamField body="response_body" type="Hash">
+  The parsed response body returned by Elasticsearch.
+</ParamField>
+
+### Sample payload
+
+```ruby
+{
+  index:         "index-test",
+  type:          nil,
+  action:        "docs.search",
+  context:       nil,
+  request_body:  "{\"query\":{\"match_all\":{}}}",
+  url:           #<URI::HTTP http://localhost:9200/index-test/_search?size=0>,
+  method:        :get,
+  status:        200
+}
+```
+
+---
+
+## Passing context through requests
+
+Any ElastomerClient method accepts a `:context` parameter that is passed unchanged to the notification payload. Use this to carry application-level metadata alongside the Elasticsearch instrumentation.
+
+```ruby
+docs = client.docs("my-index")
+
+docs.search(
+  { query: { match_all: {} } },
+  context: { request_id: request.uuid, caller: "ProductsController#index" }
+)
+```
+
+Your subscriber can then read `payload[:context]` to correlate the Elasticsearch request with the originating application request.
+
+---
+
+## Measuring request durations
+
+```ruby
+ActiveSupport::Notifications.subscribe('request.client.elastomer') do |_, start_time, end_time, _, payload|
+  duration_ms = (end_time - start_time) * 1000.0
+
+  Rails.logger.info(
+    message:    "Elasticsearch request",
+    action:     payload[:action],
+    index:      payload[:index],
+    status:     payload[:status],
+    method:     payload[:method],
+    duration_ms: duration_ms.round(2)
+  )
+end
+```
+
+---
+
+## Using a custom notifications service
+
+By default ElastomerClient uses `ActiveSupport::Notifications` as its instrumentation backend. You can substitute any object that implements the same `instrument` interface (e.g. a custom aggregator or a test double):
+
+```ruby
+require 'elastomer_client/notifications'
+
+ElastomerClient::Notifications.service = MyCustomInstrumenter
+```
+
+The service must respond to:
+
+```ruby
+service.instrument(event_name, payload) { ... }
+```
+
+---
+
+## Rails and APM integration
+
+Because ElastomerClient notifications follow the `ActiveSupport::Notifications` convention, they integrate with the Rails ecosystem and APM agents automatically:
+
+<CodeGroup>
+```ruby Rails log subscriber
+# config/initializers/elasticsearch_instrumentation.rb
+ActiveSupport::Notifications.subscribe('request.client.elastomer') do |_, start, finish, _, payload|
+  Rails.logger.debug do
+    "[ES] #{payload[:action]} #{payload[:index]} (#{((finish - start) * 1000).round(1)}ms) status=#{payload[:status]}"
+  end
+end
+```
+
+```ruby Custom metrics counter
+# Increment a StatsD counter per action
+ActiveSupport::Notifications.subscribe('request.client.elastomer') do |_, start, finish, _, payload|
+  duration = ((finish - start) * 1000).round
+  StatsD.measure("elasticsearch.#{payload[:action]}", duration, tags: ["status:#{payload[:status]}"])
+end
+```
+</CodeGroup>
+
+APM agents such as Elastic APM, Datadog, and Scout that automatically subscribe to `ActiveSupport::Notifications` will pick up ElastomerClient events without any additional configuration once you `require 'elastomer_client/notifications'`.
+
+---
+
+## Valid action values
+
+The `:action` payload field takes one of these values, organized by subsystem:
+
+<Accordion title="All valid action strings">
+
+**Bulk**
+- `bulk`
+
+**Cluster**
+- `cluster.get_aliases`
+- `cluster.get_settings`
+- `cluster.health`
+- `cluster.info`
+- `cluster.pending_tasks`
+- `cluster.ping`
+- `cluster.reroute`
+- `cluster.state`
+- `cluster.stats`
+- `cluster.update_aliases`
+- `cluster.update_settings`
+
+**Cross-Cluster Replication**
+- `create_auto_follow_pattern`
+- `delete_auto_follow_pattern`
+- `follow`
+- `get_auto_follow_pattern`
+- `get_follower_info`
+- `pause_follow`
+- `unfollow`
+
+**Documents**
+- `delete_by_query`
+- `docs.count`
+- `docs.delete`
+- `docs.exists`
+- `docs.explain`
+- `docs.get`
+- `docs.index`
+- `docs.multi_get`
+- `docs.multi_termvectors`
+- `docs.search`
+- `docs.search_shards`
+- `docs.source`
+- `docs.termvector`
+- `docs.update`
+- `docs.validate`
+- `msearch`
+- `update_by_query`
+
+**Index**
+- `index.add_alias`
+- `index.analyze`
+- `index.clear_cache`
+- `index.close`
+- `index.create`
+- `index.delete`
+- `index.delete_alias`
+- `index.exists`
+- `index.flush`
+- `index.forcemerge`
+- `index.get_alias`
+- `index.get_aliases`
+- `index.get_mapping`
+- `index.get_settings`
+- `index.open`
+- `index.recovery`
+- `index.refresh`
+- `index.segments`
+- `index.stats`
+- `index.suggest`
+- `index.update_mapping`
+- `index.update_settings`
+
+**Nodes**
+- `nodes.hot_threads`
+- `nodes.info`
+- `nodes.stats`
+
+**Percolator**
+- `mpercolate`
+- `percolator.create`
+- `percolator.delete`
+- `percolator.get`
+- `percolator.percolate`
+- `percolator.percolate_count`
+
+**Reindex**
+- `reindex`
+- `rethrottle`
+
+**Repository**
+- `repository.create`
+- `repository.delete`
+- `repository.exists`
+- `repository.get`
+- `repository.status`
+- `repository.update`
+
+**Search / Scroll**
+- `search.clear_scroll`
+- `search.scroll`
+- `search.start_scroll`
+
+**Snapshot**
+- `snapshot.create`
+- `snapshot.delete`
+- `snapshot.exists`
+- `snapshot.get`
+- `snapshot.restore`
+- `snapshot.status`
+
+**Tasks**
+- `tasks.cancel`
+- `tasks.get`
+- `tasks.list`
+- `tasks.parent`
+
+**Templates**
+- `template.create`
+- `template.delete`
+- `template.exists`
+- `template.get`
+
+</Accordion>

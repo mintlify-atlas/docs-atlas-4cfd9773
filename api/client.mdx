@@ -1,0 +1,261 @@
+---
+title: "Client"
+description: "The ElastomerClient::Client class — connecting, making requests, and handling responses"
+---
+
+`ElastomerClient::Client` is the entry point for all communication with Elasticsearch. It manages the Faraday HTTP connection, builds URLs from Addressable templates, handles authentication, and raises typed exceptions on error responses.
+
+## Creating a client
+
+```ruby
+require "elastomer_client/client"
+
+# Connect to the default URL (http://localhost:9200)
+client = ElastomerClient::Client.new
+
+client.host  #=> "localhost"
+client.port  #=> 9200
+client.url   #=> "http://localhost:9200"
+```
+
+Pass keyword arguments to customise the connection:
+
+```ruby
+client = ElastomerClient::Client.new(
+  url:          "http://es-host:9200",
+  adapter:      :net_http_persistent,
+  open_timeout: 1,
+  read_timeout: 10
+)
+```
+
+### Constructor parameters
+
+<ParamField path="host" type="string" default="localhost">
+  Elasticsearch host. Ignored when `:url` is provided.
+</ParamField>
+
+<ParamField path="port" type="number" default="9200">
+  Elasticsearch port. Ignored when `:url` is provided.
+</ParamField>
+
+<ParamField path="url" type="string">
+  Full URL string. Overrides `:host` and `:port`.
+</ParamField>
+
+<ParamField path="read_timeout" type="number" default="5">
+  Seconds to wait for a response before raising a timeout error. Can be overridden per request.
+</ParamField>
+
+<ParamField path="open_timeout" type="number" default="2">
+  Seconds to wait when opening a new TCP connection.
+</ParamField>
+
+<ParamField path="adapter" type="string | symbol" default="Faraday.default_adapter">
+  The Faraday adapter to use. `:net_http_persistent` is recommended for production.
+</ParamField>
+
+<ParamField path="opaque_id" type="boolean" default="false">
+  When `true`, attaches an `X-Opaque-Id` header to every request and validates it on the response. Useful for detecting stale responses on persistent connections.
+</ParamField>
+
+<ParamField path="max_request_size" type="number" default="262144000">
+  Maximum request body size in bytes (default 250 MB). Requests exceeding this limit are rejected before sending.
+</ParamField>
+
+<ParamField path="strict_params" type="boolean" default="false">
+  When `true`, raises an exception if an unrecognised query parameter is passed to an API method.
+</ParamField>
+
+<ParamField path="es_version" type="string">
+  Skip the startup version probe by providing the Elasticsearch version string explicitly, e.g. `"8.12.0"`.
+</ParamField>
+
+<ParamField path="compress_body" type="boolean" default="false">
+  Gzip-compress request bodies before sending.
+</ParamField>
+
+<ParamField path="basic_auth" type="object">
+  Hash with `:username` and `:password` keys for HTTP Basic authentication.
+</ParamField>
+
+<ParamField path="token_auth" type="string">
+  Bearer token string. Overrides `:basic_auth` when present.
+</ParamField>
+
+---
+
+## Checking connectivity
+
+```ruby
+client.ping       #=> true / false
+client.available? #=> true / false  (alias for ping)
+```
+
+`ping` sends a `HEAD /` request. It returns `false` (rather than raising) on any network or server error, making it safe to use in health checks.
+
+---
+
+## Server information
+
+```ruby
+# Raw version string
+client.version           #=> "8.12.1"
+
+# Semantic::Version object for comparisons
+client.semantic_version  #=> #<Semantic::Version "8.12.1">
+client.semantic_version >= Semantic::Version.new("8.0.0")  #=> true
+
+# Full server info hash
+client.info
+#=> {
+#     "name"    => "node-1",
+#     "version" => { "number" => "8.12.1", ... },
+#     ...
+#   }
+```
+
+<Tip>
+  Pass `es_version: "8.12.0"` to the constructor to avoid the HTTP round-trip
+  that `version` makes on first call.
+</Tip>
+
+---
+
+## HTTP methods
+
+The five standard HTTP verbs are exposed directly on the client. Each accepts a path string and an optional parameters Hash.
+
+```ruby
+client.head(path, params = {})
+client.get(path, params = {})
+client.put(path, params = {})
+client.post(path, params = {})
+client.delete(path, params = {})
+```
+
+All methods except `head` raise an `ElastomerClient::Client::Error` subclass on 4xx/5xx responses.
+
+### The `:body` reserved parameter
+
+Pass `:body` in the params Hash to set the request body. The value is handled as follows:
+
+| Value type | Behaviour |
+|------------|-----------|
+| `Hash` | Serialised to JSON |
+| `String` | Sent as-is (assumed to be pre-serialised JSON) |
+| `Array` | Items joined with `\n`, trailing `\n` appended (bulk/multi-search format) |
+
+```ruby
+client.put "/my-index/_doc/1", body: { title: "Hello", author: "Alice" }
+
+# Pre-serialised JSON
+client.put "/my-index/_doc/2", body: '{"title":"Hello"}'
+
+# Bulk format (Array)
+client.post "/_bulk", body: [
+  { index: { _index: "my-index", _id: "3" } },
+  { title: "Bulk doc" }
+]
+```
+
+### The `:read_timeout` per-request override
+
+```ruby
+# Wait up to 30 seconds for this slow aggregation query
+client.get "/my-index/_search", body: { aggs: { ... } }, read_timeout: 30
+```
+
+The override applies only to the single request. The global timeout set at construction time is used for all other requests.
+
+### The `:action` and `:context` parameters
+
+Every method in the gem passes an `:action` string (e.g. `"cluster.health"`) to the notifications layer. You cannot change `:action`, but you can attach your own `:context` value that will be forwarded unchanged:
+
+```ruby
+client.cluster.health(
+  wait_for_status: "green",
+  context: { caller: "deploy_script", deploy_id: 42 }
+)
+```
+
+---
+
+## URL expansion with Addressable templates
+
+Paths are Addressable URI templates. Template variables in `{curly_braces}` are filled from the params Hash; remaining keys become query parameters.
+
+```ruby
+# Optional path segments use {/var} syntax
+client.expand_path("{/index}{/type}/_search", { q: "*:*" })
+#=> "/_search?q=*:*"
+
+client.expand_path("{/index}{/type}/_search", { index: "twitter", q: "*:*" })
+#=> "/twitter/_search?q=*:*"
+
+client.expand_path("{/index}{/type}/_search", {
+  index: "twitter",
+  type:  "tweet",
+  q:     "*:*"
+})
+#=> "/twitter/tweet/_search?q=*:*"
+
+client.expand_path("{/index}{/type}/_search", {
+  index: "twitter",
+  type:  %w[tweet user],
+  q:     "*:*",
+  size:  0
+})
+#=> "/twitter/tweet,user/_search?q=*:*&size=0"
+```
+
+Required path segments use `/{var}` syntax. Passing `nil` or a blank string raises an `ArgumentError`:
+
+```ruby
+# :type is required here — omitting it raises ArgumentError
+client.expand_path("/{index}/{type}/_search", { index: "twitter", q: "*:*" })
+#=> raises ArgumentError
+```
+
+---
+
+## Duplicating a client
+
+`dup` returns a new `Client` instance configured identically to the original, but with its own independent Faraday connection:
+
+```ruby
+read_client  = ElastomerClient::Client.new(url: "http://es:9200", read_timeout: 5)
+write_client = read_client.dup
+# write_client shares the same URL and auth, but is a separate object
+```
+
+---
+
+## Resetting the connection
+
+`reset!` clears the cached Faraday connection. A fresh connection is created on the next request. This is useful after a fork or after changing network conditions:
+
+```ruby
+client.reset!  #=> returns the client itself for chaining
+```
+
+---
+
+## Error handling
+
+The client maps Elasticsearch error responses to typed Ruby exceptions. All inherit from `ElastomerClient::Client::Error`, which exposes `fatal?` and `retry?` predicates.
+
+| Exception class | When raised |
+|-----------------|-------------|
+| `ServerError` | HTTP 5xx response |
+| `IndexNotFoundError` | `index_not_found_exception` from Elasticsearch |
+| `IllegalArgument` | `illegal_argument_exception` |
+| `RejectedExecutionError` | `es_rejected_execution_exception` (queue full — retryable) |
+| `DocumentAlreadyExistsError` | `version_conflict_engine_exception` |
+| `QueryParsingError` | `query_shard_exception` / `parsing_exception` |
+| `RequestError` | Any other error body from Elasticsearch |
+
+<Warning>
+  The client does not implement automatic retries. Check `error.retry?` and
+  implement your own back-off logic if needed.
+</Warning>

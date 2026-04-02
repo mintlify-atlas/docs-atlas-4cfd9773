@@ -1,0 +1,212 @@
+---
+title: "Bulk Indexing"
+description: "Index, update, and delete large numbers of documents in a single API call"
+---
+
+The bulk API lets you send multiple index, create, update, and delete operations in a single HTTP request. ElastomerClient wraps this with both a direct body form and a convenient block-based DSL that handles request batching and auto-flushing automatically.
+
+## Direct body form
+
+Pass a pre-formatted bulk request body string and optional index params:
+
+```ruby
+body = <<~NDJSON
+  {"index":{"_id":"1"}}
+  {"title":"Ruby on Rails","author":"DHH"}
+  {"index":{"_id":"2"}}
+  {"title":"The Well-Grounded Rubyist","author":"David A. Black"}
+NDJSON
+
+response = client.bulk(body, index: "books")
+puts response["errors"]  # => false
+puts response["took"]    # => 12
+```
+
+<Warning>
+  The body must be a newline-delimited JSON string. Each action line must be followed immediately by its source document line (except for `delete` actions, which have no source).
+</Warning>
+
+## Block-based DSL
+
+The block form is the recommended approach for most use cases. ElastomerClient accumulates operations inside the block and dispatches one or more bulk requests automatically.
+
+<Steps>
+  <Step title="Open a bulk block">
+    Call `client.bulk` with optional default params and a block. The block receives a `Bulk` instance (`b`).
+
+    ```ruby
+    client.bulk(index: "books") do |b|
+      # add operations here
+    end
+    ```
+  </Step>
+  <Step title="Add operations">
+    Call index, create, update, or delete methods on the bulk object:
+
+    ```ruby
+    client.bulk(index: "books") do |b|
+      b.index({ title: "Eloquent Ruby", author: "Russ Olsen" }, _id: 1)
+      b.create({ title: "The Ruby Way", author: "Hal Fulton" }, _id: 2)
+      b.update({ doc: { author: "Hal E. Fulton" } }, _id: 2)
+      b.delete(_id: 1)
+    end
+    ```
+  </Step>
+  <Step title="Flush is automatic">
+    At the end of the block, `call` is invoked automatically to flush any remaining buffered actions. If the buffer reaches the `request_size` or `action_count` threshold during the block, intermediate flushes happen transparently.
+  </Step>
+</Steps>
+
+## Bulk operation methods
+
+<ParamField path="b.index" type="method">
+  Add an index operation. Replaces any existing document with the same `_id`.
+
+  ```ruby
+  b.index({ title: "Refactoring", author: "Martin Fowler" }, _id: 42, routing: "fiction")
+  ```
+</ParamField>
+
+<ParamField path="b.create" type="method">
+  Add a create operation. Fails if a document with the same `_id` already exists.
+
+  ```ruby
+  b.create({ title: "Clean Code", author: "Robert C. Martin" }, _id: 99)
+  ```
+</ParamField>
+
+<ParamField path="b.update" type="method">
+  Add an update operation. Use the `doc` key for partial updates.
+
+  ```ruby
+  b.update({ doc: { published_year: 2008 } }, _id: 42)
+  ```
+</ParamField>
+
+<ParamField path="b.delete" type="method">
+  Add a delete operation. No source document is needed — only routing params.
+
+  ```ruby
+  b.delete(_id: 99)
+  ```
+</ParamField>
+
+### Document directives
+
+Pass routing and identification directives as params (underscore prefix is optional):
+
+| Directive | Description |
+|---|---|
+| `:_id` | Document ID. Omit to let Elasticsearch auto-generate. |
+| `:_routing` | Custom routing value for shard placement. |
+| `:_index` | Per-operation index override (overrides the block-level `:index`). |
+| `:version` | Optimistic concurrency version check. |
+| `:retry_on_conflict` | Number of retries on version conflict for update operations. |
+
+```ruby
+client.bulk(index: "books") do |b|
+  # Override index per document
+  b.index({ title: "POODR" }, _id: 10, _index: "ruby-books", routing: "oop")
+  b.index({ title: "JavaScript: The Good Parts" }, _id: 20, _index: "js-books")
+end
+```
+
+## Auto-flushing thresholds
+
+The `Bulk` class buffers actions and flushes automatically when a threshold is reached. The default request size is **10 MB**.
+
+<ParamField query="request_size" type="number" default="10485760">
+  Maximum accumulated request body size in bytes before an automatic flush. Set to `nil` to disable size-based flushing entirely.
+
+  ```ruby
+  # Flush every 5 MB
+  client.bulk(index: "logs", request_size: 5 * 1024 * 1024) do |b|
+    large_dataset.each { |doc| b.index(doc) }
+  end
+  ```
+</ParamField>
+
+<ParamField query="action_count" type="number">
+  Maximum number of accumulated actions before an automatic flush. When set alongside `request_size`, whichever limit is reached first triggers a flush.
+
+  ```ruby
+  # Flush every 500 operations
+  client.bulk(index: "events", action_count: 500) do |b|
+    event_stream.each { |event| b.index(event) }
+  end
+  ```
+</ParamField>
+
+<Note>
+  The `request_size` is capped at `client.max_request_size`. Setting a value above this cap silently clamps it to the maximum.
+</Note>
+
+## Streaming bulk from an Enumerator
+
+For streaming pipelines, use `bulk_stream_responses` or `bulk_stream_items` to process operations lazily without loading everything into memory.
+
+### `bulk_stream_responses`
+
+Returns an `Enumerator` that yields each bulk response as operations are flushed:
+
+```ruby
+ops = [
+  [:index,  { title: "Book A" }, { _id: 1 }],
+  [:index,  { title: "Book B" }, { _id: 2 }],
+  [:delete, { _id: 3 }],
+]
+
+client.bulk_stream_responses(ops, index: "books").each do |response|
+  puts "Took #{response["took"]}ms, errors: #{response["errors"]}"
+end
+```
+
+### `bulk_stream_items`
+
+Iterates individual response items and returns aggregate stats:
+
+```ruby
+ops = build_ops_enumerator  # any Enumerator of [:action, doc, params] tuples
+
+stats = client.bulk_stream_items(ops, index: "books") do |item|
+  action, result = item.first
+  unless result["status"].between?(200, 299)
+    warn "Failed #{action} on #{result["_id"]}: #{result["error"]}"
+  end
+end
+
+puts stats
+# => { "took" => 340, "errors" => false, "success" => 1000, "failure" => 0 }
+```
+
+## Complete example
+
+```ruby
+require "elastomer_client"
+
+client = ElastomerClient::Client.new(url: "http://localhost:9200")
+
+documents = [
+  { _id: 1, title: "The Pragmatic Programmer", author: "Hunt & Thomas", year: 1999 },
+  { _id: 2, title: "Design Patterns",          author: "Gang of Four",   year: 1994 },
+  { _id: 3, title: "Refactoring",              author: "Martin Fowler",  year: 1999 },
+  { _id: 4, title: "Clean Code",               author: "Robert Martin",  year: 2008 },
+  { _id: 5, title: "The Mythical Man-Month",   author: "Fred Brooks",    year: 1975 },
+]
+
+client.bulk(index: "books", action_count: 100) do |b|
+  documents.each do |doc|
+    b.index(
+      { title: doc[:title], author: doc[:author], year: doc[:year] },
+      _id: doc[:_id],
+      routing: doc[:author]
+    )
+  end
+end
+
+puts "Indexed #{documents.size} books"
+```
+
+<Tip>
+  When indexing millions of documents, combine `action_count` with a moderate `request_size` (e.g., 5 MB) to keep individual HTTP requests at a manageable size while still batching efficiently.
+</Tip>

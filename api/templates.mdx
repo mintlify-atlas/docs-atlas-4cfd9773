@@ -1,0 +1,196 @@
+---
+title: "Templates"
+description: "Manage Elasticsearch index templates"
+---
+
+The `Template` class provides access to the index templates API. Templates define settings and mappings that are automatically applied when a new index whose name matches a pattern is created.
+
+## Getting a Template instance
+
+```ruby
+template = client.template("logs-template")
+template.name  #=> "logs-template"
+```
+
+A template name is required — unlike some other API objects, `Template` does not accept `nil`.
+
+---
+
+## Complete template management example
+
+<Steps>
+  <Step title="Check whether the template exists">
+    ```ruby
+    template = client.template("logs-template")
+    template.exists?  #=> false
+    ```
+  </Step>
+  <Step title="Create the template">
+    ```ruby
+    template.create(
+      index_patterns: ["logs-*"],
+      order: 1,
+      settings: {
+        number_of_shards:   3,
+        number_of_replicas: 1,
+        refresh_interval:   "30s"
+      },
+      mappings: {
+        properties: {
+          "@timestamp" => { type: "date" },
+          level:         { type: "keyword" },
+          service:       { type: "keyword" },
+          message:       { type: "text" }
+        }
+      }
+    )
+    #=> { "acknowledged" => true }
+    ```
+  </Step>
+  <Step title="Verify the template was stored">
+    ```ruby
+    stored = template.get
+    stored["logs-template"]["index_patterns"]  #=> ["logs-*"]
+    ```
+  </Step>
+  <Step title="Create an index that matches the pattern">
+    ```ruby
+    # Settings and mappings from the template are applied automatically
+    client.index("logs-2024-04").create({})
+    ```
+  </Step>
+  <Step title="Delete the template when no longer needed">
+    ```ruby
+    template.delete
+    #=> { "acknowledged" => true }
+    ```
+  </Step>
+</Steps>
+
+---
+
+## Methods
+
+### `exists?(params = {})` / `exist?(params = {})`
+
+Returns `true` if a template with this name exists on the cluster:
+
+```ruby
+client.template("logs-template").exists?  #=> true
+client.template("no-such-template").exists?  #=> false
+```
+
+### `get(params = {})`
+
+Retrieves the template definition:
+
+```ruby
+result = client.template("logs-template").get
+result["logs-template"]
+#=> {
+#     "order"          => 1,
+#     "index_patterns" => ["logs-*"],
+#     "settings"       => { ... },
+#     "mappings"       => { ... },
+#     "aliases"        => {}
+#   }
+```
+
+### `create(template_body, params = {})`
+
+Creates or replaces the template on the cluster.
+
+```ruby
+client.template("logs-template").create(
+  index_patterns: ["logs-*"],
+  order:          1,
+  settings: {
+    number_of_shards:   3,
+    number_of_replicas: 1
+  },
+  mappings: {
+    properties: {
+      "@timestamp" => { type: "date" },
+      level:         { type: "keyword" },
+      message:       { type: "text" }
+    }
+  }
+)
+```
+
+<ParamField path="template_body" type="object" required>
+  Template definition Hash (or pre-serialised JSON string).
+</ParamField>
+
+<ParamField path="template_body.index_patterns" type="string[]" required>
+  Glob patterns that new index names are matched against, e.g. `["logs-*"]`.
+</ParamField>
+
+<ParamField path="template_body.order" type="number" default="0">
+  When multiple templates match an index name, templates with a higher `order`
+  are applied last and therefore take precedence.
+</ParamField>
+
+<ParamField path="template_body.settings" type="object">
+  Index settings to apply — shards, replicas, analysis configuration, etc.
+</ParamField>
+
+<ParamField path="template_body.mappings" type="object">
+  Field mappings to apply to every matched index.
+</ParamField>
+
+<ParamField path="template_body.aliases" type="object">
+  Aliases to add automatically when a matching index is created.
+</ParamField>
+
+### `delete(params = {})`
+
+Removes the template from the cluster. Existing indices that were created using this template are not affected.
+
+```ruby
+client.template("logs-template").delete
+#=> { "acknowledged" => true }
+```
+
+<Warning>
+  Deleting a template does not affect indices that were already created from
+  it. New indices matching the old pattern will no longer receive automatic
+  settings and mappings.
+</Warning>
+
+---
+
+## Template ordering
+
+When more than one template matches a new index name, all matching templates are merged. The `order` field controls which settings win in the case of conflicts — lower-order templates are applied first, and higher-order templates override them.
+
+```ruby
+# Base template — applied first (order 0)
+client.template("base-logs").create(
+  index_patterns: ["logs-*"],
+  order:          0,
+  settings: { number_of_shards: 3, number_of_replicas: 1 }
+)
+
+# Override template — applied second, wins on conflicts (order 1)
+client.template("prod-logs").create(
+  index_patterns: ["logs-prod-*"],
+  order:          1,
+  settings: { number_of_replicas: 2 }
+)
+# A new "logs-prod-2024-04" index gets: 3 shards, 2 replicas
+```
+
+---
+
+## Listing all templates
+
+To list every template currently defined on the cluster, use the cluster API:
+
+```ruby
+client.cluster.templates
+#=> {
+#     "logs-template" => { "order" => 1, "index_patterns" => ["logs-*"], ... },
+#     "metrics-template" => { ... }
+#   }
+```

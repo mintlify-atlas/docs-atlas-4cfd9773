@@ -1,0 +1,76 @@
+---
+title: "Introduction"
+description: "ElastomerClient is a low-level Ruby client for Elasticsearch"
+---
+
+ElastomerClient is a Ruby gem that provides a one-to-one mapping of the Elasticsearch HTTP API. It is intentionally low-level: it handles HTTP communication, JSON encoding/decoding, and error classification, while leaving higher-level concerns such as connection pooling, round-robin routing, and retry logic to you and other libraries.
+
+## Design philosophy
+
+ElastomerClient was built when an official Ruby client was not yet available from Elastic. The goals have remained consistent since:
+
+- **One-to-one API mapping.** Every Elasticsearch endpoint is accessible through a corresponding Ruby method. The client avoids adding abstractions that obscure what is being sent to the cluster.
+- **Simplicity.** The client does one thing: make HTTP requests to Elasticsearch and return the response. Connection pooling, load balancing, and retry strategies are better handled at different layers.
+- **Composability.** Higher-level functionality — bulk indexing, scan/scroll iteration, multi-search — is built from smaller, focused components. This is the UNIX philosophy applied to a Ruby library.
+
+There are a few places where it made sense to wrap the Elasticsearch API inside Ruby idioms. The scan/scroll search type, for example, is exposed as a Ruby iterator rather than requiring you to manage continuation tokens manually.
+
+## Compatibility
+
+<Note>
+  ElastomerClient is tested against **Ruby 3.2** and the following Elasticsearch versions: **5.6**, **8.13**, and **8.18**.
+</Note>
+
+The gem depends on [Faraday](https://github.com/lostisland/faraday) for HTTP communication, which means you can swap the underlying HTTP adapter at initialization time.
+
+## Components
+
+The API is decomposed into logical sections. Start with the **Client** — all other components are built on top of it.
+
+### Core components
+
+<CardGroup cols={2}>
+  <Card title="Client" icon="plug" href="/api/client">
+    Connects to Elasticsearch, makes HTTP requests, processes responses, and classifies errors.
+  </Card>
+  <Card title="Index" icon="database" href="/api/index">
+    Manages index lifecycle: creation, deletion, mappings, and settings.
+  </Card>
+  <Card title="Docs" icon="file-text" href="/api/docs">
+    Indexes, retrieves, updates, deletes, and searches documents within an index.
+  </Card>
+  <Card title="Cluster" icon="server" href="/api/cluster">
+    Accesses cluster-level information: health, state, settings, and templates.
+  </Card>
+  <Card title="Templates" icon="layout-template" href="/api/templates">
+    Manages index templates applied to new indices at creation time.
+  </Card>
+  <Card title="Nodes" icon="cpu" href="/api/nodes">
+    Retrieves node-level stats and information from the cluster.
+  </Card>
+</CardGroup>
+
+### Bulk and search components
+
+<CardGroup cols={2}>
+  <Card title="Bulk indexing" icon="layers" href="/advanced/bulk-indexing">
+    Efficiently index, update, or delete large numbers of documents in a single request.
+  </Card>
+  <Card title="Multi-search" icon="search" href="/advanced/multi-search">
+    Execute multiple search requests in a single HTTP call.
+  </Card>
+  <Card title="Scan/scroll" icon="list" href="/advanced/scan-scroll">
+    Iterate over large result sets using a Ruby iterator instead of managing scroll tokens manually.
+  </Card>
+</CardGroup>
+
+### Operational components
+
+<CardGroup cols={2}>
+  <Card title="Snapshots" icon="archive" href="/operations/snapshots">
+    Register repositories and manage index snapshots for backup and restore.
+  </Card>
+  <Card title="Notifications" icon="bell" href="/operations/notifications">
+    Instrument all Elasticsearch requests using ActiveSupport::Notifications.
+  </Card>
+</CardGroup>

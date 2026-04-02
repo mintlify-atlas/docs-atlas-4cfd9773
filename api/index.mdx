@@ -1,0 +1,390 @@
+---
+title: "Index"
+description: "Manage Elasticsearch indexes: create, configure, and delete"
+---
+
+The `Index` class provides access to all index-level Elasticsearch API commands — creation, deletion, mappings, settings, aliases, and maintenance operations.
+
+## Getting an Index instance
+
+```ruby
+index = client.index("blog")
+index.name  #=> "blog"
+```
+
+Pass an Array to operate on multiple indices at once:
+
+```ruby
+# Operate on multiple indices
+index = client.index(%w[blog users])
+
+# Or omit the name and pass it per call
+index = client.index
+index.refresh(index: "blog")
+```
+
+<Note>
+  Some operations (like `exists?`) are per-index only. For multi-index
+  operations use `"_all"` or pass an Array.
+</Note>
+
+---
+
+## Existence
+
+### `exists?(params = {})`
+
+Returns `true` if the index exists on the cluster. Also aliased as `exist?`.
+
+```ruby
+client.index("blog").exists?            #=> true
+client.index("no-such-index").exists?   #=> false
+
+# Multi-index: false if ANY index is missing
+client.index(%w[blog users missing]).exists?  #=> false
+```
+
+---
+
+## Creating and deleting
+
+### `create(body, params = {})`
+
+Creates the index. Pass settings and mappings as a Hash:
+
+```ruby
+index = client.index("blog")
+index.create(
+  settings: {
+    number_of_shards:   3,
+    number_of_replicas: 1
+  },
+  mappings: {
+    properties: {
+      title:     { type: "text" },
+      author:    { type: "keyword" },
+      post_date: { type: "date" },
+      body:      { type: "text" }
+    }
+  }
+)
+#=> { "acknowledged" => true, "shards_acknowledged" => true, "index" => "blog" }
+```
+
+<ParamField path="body" type="object" required>
+  Index definition Hash (or JSON string) containing `:settings` and/or `:mappings`.
+</ParamField>
+
+### `delete(params = {})`
+
+Permanently removes the index and all its documents.
+
+```ruby
+client.index("blog").delete
+#=> { "acknowledged" => true }
+```
+
+<Warning>
+  Deletion is immediate and irreversible. Take a snapshot before deleting
+  production indices.
+</Warning>
+
+---
+
+## Opening and closing
+
+### `open(params = {})` / `close(params = {})`
+
+A closed index holds no memory resources but retains its data on disk.
+
+```ruby
+client.index("blog").close
+#=> { "acknowledged" => true }
+
+client.index("blog").open
+#=> { "acknowledged" => true, "shards_acknowledged" => true }
+```
+
+---
+
+## Settings
+
+### `get_settings(params = {})` / `settings(params = {})`
+
+```ruby
+client.index("blog").get_settings
+#=> { "blog" => { "settings" => { "index" => { ... } } } }
+```
+
+### `update_settings(body, params = {})`
+
+Updates live settings. Refer to the Elasticsearch documentation for which settings are dynamically changeable.
+
+```ruby
+client.index("blog").update_settings(
+  index: {
+    "blocks.write"            => false,
+    "number_of_replicas"      => 2,
+    "refresh_interval"        => "30s"
+  }
+)
+#=> { "acknowledged" => true }
+```
+
+<ParamField path="body" type="object" required>
+  Settings Hash (or JSON string). Wrap index-level settings under an `index:` key.
+</ParamField>
+
+---
+
+## Mappings
+
+### `get_mapping(params = {})` / `mapping(params = {})`
+
+Returns the mapping for the index. Filter to a specific type with `:type`.
+
+```ruby
+client.index("blog").get_mapping
+#=> { "blog" => { "mappings" => { "properties" => { ... } } } }
+```
+
+### `update_mapping(type, body, params = {})` / `put_mapping(type, body, params = {})`
+
+Registers or updates a mapping definition.
+
+```ruby
+client.index("blog").update_mapping(
+  "post",
+  post: {
+    properties: {
+      post_date: { type: "date", format: "dateOptionalTime" }
+    }
+  }
+)
+```
+
+<Note>
+  The type name is passed twice: as the first argument and inside the body
+  Hash. This matches the Elasticsearch API shape.
+</Note>
+
+---
+
+## Aliases
+
+### `get_aliases(params = {})` / `aliases(params = {})`
+
+Returns all aliases defined on the index:
+
+```ruby
+client.index("blog").get_aliases
+#=> { "blog" => { "aliases" => { "blog-read" => {} } } }
+```
+
+### `get_alias(name, params = {})`
+
+Returns a specific named alias (or a pattern):
+
+```ruby
+client.index("blog").get_alias("*")       # all aliases
+client.index("blog").get_alias("blog-*")  # wildcard match
+```
+
+### `add_alias(name, params = {})`
+
+Adds a single alias to the index:
+
+```ruby
+client.index("blog").add_alias("blog-read", routing: "user1")
+#=> { "acknowledged" => true }
+```
+
+<ParamField path="name" type="string" required>
+  Alias name to add.
+</ParamField>
+
+<ParamField path="params.routing" type="string">
+  Optional routing value associated with the alias.
+</ParamField>
+
+<ParamField path="params.filter" type="object">
+  Optional filter query to scope the alias to a subset of documents.
+</ParamField>
+
+### `delete_alias(name, params = {})`
+
+Removes one or more aliases:
+
+```ruby
+client.index("blog").delete_alias("blog-read")
+client.index("blog").delete_alias(%w[blog-read blog-write])
+```
+
+---
+
+## Maintenance
+
+### `refresh(params = {})`
+
+Makes all recent index operations immediately available for search:
+
+```ruby
+client.index("blog").refresh
+client.index("_all").refresh  # refresh every index
+```
+
+### `flush(params = {})`
+
+Flushes the transaction log and frees memory:
+
+```ruby
+client.index("blog").flush
+```
+
+### `forcemerge(params = {})`
+
+Reduces the number of Lucene segment files. CPU and I/O intensive — do not run on a hot index.
+
+```ruby
+# Merge the previous month's event log down to one segment
+client.index("event-log-2024-03").forcemerge(max_num_segments: 1)
+```
+
+### `clear_cache(params = {})`
+
+Clears fielddata, filter, and other caches:
+
+```ruby
+client.index("blog").clear_cache
+```
+
+---
+
+## Statistics and diagnostics
+
+### `stats(params = {})`
+
+Returns document counts, store size, and operation counts:
+
+```ruby
+client.index("blog").stats
+client.index("blog").stats(stats: "docs")
+client.index("blog").stats(stats: %w[flush merge])
+```
+
+<ParamField path="params.stats" type="string | string[]">
+  One or more stat groups: `docs`, `store`, `indexing`, `get`, `search`,
+  `merge`, `flush`, `refresh`, `query_cache`, `fielddata`, `segments`, `warmer`.
+</ParamField>
+
+### `segments(params = {})`
+
+Returns low-level Lucene segment information for each shard:
+
+```ruby
+client.index("blog").segments
+```
+
+### `recovery(params = {})`
+
+Shows ongoing and completed shard recovery operations:
+
+```ruby
+client.index("blog").recovery
+```
+
+---
+
+## Accessing documents
+
+`index.docs` returns a `Docs` instance scoped to the current index. See [Documents](/api/docs) for the full API.
+
+```ruby
+docs = client.index("blog").docs
+docs.search(query: { match_all: {} })
+```
+
+---
+
+## Bulk operations
+
+Use `index.bulk` to perform multiple index/delete operations in a single request:
+
+```ruby
+client.index("blog").bulk do |b|
+  b.index({ title: "Post one", author: "Alice" })
+  b.index({ title: "Post two", author: "Bob" })
+  b.delete({ _id: "old-doc-id" })
+end
+```
+
+---
+
+## Scroll and scan
+
+`index.scroll` and `index.scan` delegate to the client-level scroll API, pre-scoped to the current index:
+
+```ruby
+scroll = client.index("blog").scroll('{"query":{"match_all":{}}}')
+scroll.each_document do |document|
+  puts document["_id"]
+end
+
+scan = client.index("blog").scan('{"query":{"match_all":{}}}')
+scan.each_document { |doc| puts doc["_id"] }
+```
+
+See [Scan & Scroll](/advanced/scan-scroll) for the full API.
+
+---
+
+## Multi-search
+
+`index.multi_search` delegates to the client-level multi-search, pre-scoped to the current index:
+
+```ruby
+client.index("blog").multi_search do |m|
+  m.search({ query: { match_all: {} }, size: 0 })
+  m.search({ query: { term: { author: "alice" } } })
+end
+```
+
+See [Multi-Search](/advanced/multi-search) for details.
+
+---
+
+## Text analysis
+
+### `analyze(text, params = {})`
+
+Runs text through the analysis pipeline and returns the resulting tokens. Can accept a String or a Hash body:
+
+```ruby
+# Analyse text using a specific field's analyser
+client.index("blog").analyze(
+  "The Role of Morphology in Phoneme Prediction",
+  field: "post.title"
+)
+
+# Use a named analyser
+client.index.analyze(
+  { text: "The quick brown fox", analyzer: "standard" }
+)
+```
+
+---
+
+## Suggest
+
+### `suggest(query, params = {})`
+
+Runs a [suggester query](https://www.elastic.co/guide/en/elasticsearch/reference/current/search-suggesters.html) against the index:
+
+```ruby
+result = client.index("blog").suggest(
+  title_suggestions: {
+    text: "elasticsaerch",
+    term: { field: "title" }
+  }
+)
+```

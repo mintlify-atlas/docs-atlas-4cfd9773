@@ -1,0 +1,225 @@
+---
+title: "Changelog"
+description: "Release history and version notes for ElastomerClient"
+---
+
+All notable changes to ElastomerClient are documented here.
+
+## Recent releases
+
+<AccordionGroup>
+  <Accordion title="6.2.4 — October 10, 2025" defaultOpen>
+    - Added support for ES 8.19.3
+  </Accordion>
+  <Accordion title="6.2.3 — June 6, 2025" defaultOpen>
+    - Added support for ES 8.17.2
+    - Added support for ES 8.18.0
+  </Accordion>
+  <Accordion title="6.2.2 — February 19, 2025" defaultOpen>
+    - Add support for manually and automatically following indices for cross-cluster replication
+  </Accordion>
+  <Accordion title="6.2.1 — December 10, 2024" defaultOpen>
+    - Add support for rethrottling reindex tasks
+  </Accordion>
+</AccordionGroup>
+
+## Older releases
+
+<AccordionGroup>
+  <Accordion title="6.2.0 — November 6, 2024">
+    - Add support for reindex API
+    - Remove CI checks for ES 5.6.15
+  </Accordion>
+  <Accordion title="6.1.1 — June 5, 2024">
+    - Unlock faraday_middleware version to allow 1.x
+  </Accordion>
+  <Accordion title="6.1.0 — April 9, 2024">
+    - Replace `Faraday::Error::*` with `Faraday::*` error classes
+    - Handle all `Faraday::Error` instead of `Faraday::Error::ClientError`
+    - Unlock faraday version to allow 1.0.0
+    - Bump the minimum version of faraday and faraday middleware
+  </Accordion>
+  <Accordion title="6.0.3 — April 5, 2024">
+    - Add ES 8.13 REST API spec
+    - Update CI and development versions from 8.7.0 to 8.13.0
+  </Accordion>
+  <Accordion title="6.0.2 — January 24, 2024">
+    - Change Opaque ID error handling to not throw OpaqueIDError for 5xx responses
+  </Accordion>
+  <Accordion title="6.0.1 — January 9, 2024">
+    - Move Opaque ID middleware to the end of the Faraday middleware chain
+  </Accordion>
+  <Accordion title="6.0.0 — December 8, 2023">
+    - Remove default retry logic, requiring consumers to implement their own
+    - Remove support for ES 7
+    - Move to support only the latest Ruby version
+  </Accordion>
+  <Accordion title="5.2.0 — November 7, 2023">
+    - Allow passing a Faraday connection configuration block to the client.
+  </Accordion>
+  <Accordion title="5.1.0 — September 29, 2023">
+    - Remove logic extracting parameters from document in bulk requests. Parameters now must be sent separately from the document to be parsed correctly.
+  </Accordion>
+  <Accordion title="5.0.5 — August 8, 2023">
+    - Replace usage of "found" field by "result" in tests for the delete API (#275)
+    - Reduce the noise of the client during an inspect call by hiding connection info (#276)
+    - Rename MiniTest to Minitest (#277)
+  </Accordion>
+  <Accordion title="5.0.4 — June 20, 2023">
+    - Remove support for `timestamp` and `ttl` index parameters
+  </Accordion>
+  <Accordion title="5.0.3 — June 14, 2023">
+    - Allow deprecated underscored parameters to work for Bulk API for versions ES 7+.
+    - Allow non-underscored parameters to work for Bulk API for version ES 5.
+  </Accordion>
+  <Accordion title="5.0.2 — May 31, 2023">
+    - Add ES 8.7 REST API spec
+    - Remove deprecated `type` parameter from `search_shards` API
+  </Accordion>
+  <Accordion title="5.0.1 — April 26, 2023">
+    - Fix bug in bulk API preventing string `_id` from being removed if empty
+    - Remove `_type` from document body during bulk requests for versions ES 7+
+  </Accordion>
+  <Accordion title="5.0.0 — April 17, 2023">
+    - Rename Elastomer to ElastomerClient (and elastomer to elastomer_client)
+  </Accordion>
+  <Accordion title="4.0.3 — April 7, 2023">
+    - Fix query values specified in path get removed when query values are specified with params (#261)
+    - Add support for `update_by_query` (#263)
+  </Accordion>
+  <Accordion title="4.0.2 — March 3, 2023">
+    - Fix ES 7+ handling of params like `routing` that were prefixed with an underscore in earlier versions
+  </Accordion>
+  <Accordion title="4.0.1 — February 10, 2023">
+    - Fix a bug in the bulk API interface that prevents a version check from working correctly
+  </Accordion>
+  <Accordion title="4.0.0 — February 10, 2023">
+    - Add ES 7 and ES 8 compatibility for existing functionality
+    - Remove ES 2 support
+    - Add support for newer Ruby versions (3.0, 3.1, 3.2)
+    - Remove support for older Ruby versions (< 3.0)
+  </Accordion>
+  <Accordion title="3.2.3 — February 26, 2020">
+    - Fix warnings in Ruby 2.7 when passing a Hash to a method that is expecting keyword arguments
+  </Accordion>
+  <Accordion title="3.2.2 — February 25, 2020">
+    - Update Webmock to ~> 3.5 to support Ruby 2.6+ (#222)
+  </Accordion>
+  <Accordion title="3.2.1 — August 27, 2019">
+    - Ignore basic_auth unless username and password are present
+  </Accordion>
+  <Accordion title="3.2.0 — August 22, 2019">
+    - Add config based basic and token auth to `Elastomer::Client#connection`
+    - Filter `Elastomer::Client#inspect` output to hide basic and token auth info, and reduce noisiness when debugging
+  </Accordion>
+  <Accordion title="3.1.5 — June 26, 2019">
+    - Add new more granular exception type
+  </Accordion>
+  <Accordion title="3.1.1 — February 24, 2018">
+    - Output opaque ID information when a conflict is detected
+    - Updating the `semantic` gem
+  </Accordion>
+  <Accordion title="3.1.0 — January 19, 2018">
+    - Added the `strict_params` flag for enforcing params passed to the REST API
+    - Added the `RestApiSpec` module and classes for enforcing strict params
+  </Accordion>
+  <Accordion title="3.0.1 — December 20, 2017">
+    - Fixed argument passing to `app_delete_by_query`
+    - Explicitly close scroll search contexts when scroll is complete
+  </Accordion>
+  <Accordion title="3.0.0 — December 15, 2017">
+    - Fixed swapped args in `{Client,Index}#multi_percolate` count calls using block API
+    - Support for Elasticsearch 5.x
+    - Uses Elasticsearch's built-in `_delete_by_query` when supported
+    - GET and HEAD requests are retried when possible
+    - Add support for `_tasks` API
+    - Replace `scan` queries with `scroll` sorted by `doc_id`
+  </Accordion>
+  <Accordion title="2.3.0 — November 29, 2017">
+    - Remove Elasticsearch 1.x and earlier code paths
+    - Fix CI and configure an Elasticsearch 5.6 build
+  </Accordion>
+  <Accordion title="2.2.0 — April 29, 2017">
+    - Added a `clear_scroll` API
+    - JSON timestamps include milliseconds by default
+    - Removing Fixnum usage
+  </Accordion>
+  <Accordion title="2.1.1 — September 2, 2016">
+    - Bulk index only rejects documents larger than the maximum request size
+  </Accordion>
+  <Accordion title="2.1.0 — January 2, 2016">
+    - Added enforcement of maximum request size
+    - Added some exception wrapping
+  </Accordion>
+  <Accordion title="2.0.1 — September 1, 2016">
+    - Fix bug in delete by query when routing is required
+  </Accordion>
+  <Accordion title="2.0.0 — August 25, 2016">
+    - Support Elasticsearch 2
+  </Accordion>
+  <Accordion title="0.9.0 — February 26, 2016">
+    - Adding support for the `/_suggest` API endpoint
+    - Documentation cleanup - thank you Matt Wagner @wags
+  </Accordion>
+  <Accordion title="0.8.1 — November 4, 2015">
+    - Replace yanked 0.8.0
+    - Fix code style based on Rubocop recommendations
+  </Accordion>
+  <Accordion title="0.8.0 — September 23, 2015 (yanked)">
+    <Warning>This release was yanked due to an invalid build.</Warning>
+
+    - BREAKING: Remove `Client#warmer` method
+    - Add the Percolate API
+  </Accordion>
+  <Accordion title="0.7.0 — September 18, 2015">
+    - Add streaming bulk functionality via `bulk_stream_items`
+    - Make Delete by Query compatible with Elasticsearch 2.0
+  </Accordion>
+  <Accordion title="0.6.0 — September 11, 2015">
+    - Support all URL parameters when using `Client.#scroll`
+    - BREAKING: Moved some `Scroller` reader methods into `Scroller.opts`
+  </Accordion>
+  <Accordion title="0.5.1 — April 3, 2015">
+    - Add response body to notification payload
+  </Accordion>
+  <Accordion title="0.5.0 — January 21, 2015">
+    - BREAKING: rename `action.available` notification to `action.ping`
+    - Index Component: `client.index` no longer requires a name
+    - Documents Component:
+      - `client.docs` no longer requires an index name
+      - Added an `exists?` method
+      - Added `termvector` and `multi_termvectors` methods
+      - Added a `search_shards` method
+      - Added an `mget` alias for `multi_get`
+    - Adding more documentation
+    - Rename `client.available?` to `client.ping` (aliased as `available?`)
+    - Updating tests to pass with ES 1.4.X
+    - Enabling regular scroll queries via `Client#scroll`
+  </Accordion>
+  <Accordion title="0.4.1 — October 14, 2014">
+    - Support for index `_recovery` endpoint
+    - Fix Faraday 0.8 support
+    - Wrap all Faraday exceptions
+    - Correctly wrap single-command reroute with a command array
+  </Accordion>
+  <Accordion title="0.4.0 — October 8, 2014">
+    - BREAKING: `docs.add` alias for `docs.index` removed
+    - BREAKING: Faraday exceptions are now raised as Elastomer exceptions
+    - Repository and snapshot support
+    - Support cluster state filtering on 1.x
+    - Support node stats filtering on 1.x
+    - New APIs: cluster stats, cluster pending_tasks
+    - Support single-index alias get, add, delete
+  </Accordion>
+  <Accordion title="0.3.3 — August 18, 2014">
+    - Allow symbols as parameter values (#67)
+  </Accordion>
+  <Accordion title="0.3.2 — July 2, 2014">
+    - Make underscore optional in bulk params (#66)
+  </Accordion>
+  <Accordion title="0.3.1 — June 24, 2014">
+    - First RubyGems release
+    - Make `update_aliases` more flexible
+    - Add `Client#semantic_version` for ES version comparisons
+  </Accordion>
+</AccordionGroup>

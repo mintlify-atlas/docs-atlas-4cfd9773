@@ -1,0 +1,220 @@
+---
+title: "Cross-Cluster Replication"
+description: "Set up and manage follower indexes that replicate data from a remote cluster"
+---
+
+Cross-Cluster Replication (CCR) allows you to replicate indices from a remote *leader* cluster to a local *follower* cluster. This is commonly used for geo-redundancy, data locality, and disaster recovery.
+
+<Note>
+  CCR requires the Elasticsearch Platinum or Enterprise license. It is not available on the free Basic tier. Ensure the feature is enabled before using the `ccr` API.
+</Note>
+
+## Getting a CCR instance
+
+```ruby
+ccr = client.ccr
+```
+
+All CCR methods are available on this instance.
+
+---
+
+## Follower indexes
+
+### `ccr.follow(follower_index, body, params)`
+
+Creates a new follower index that continuously replicates from a leader index on a remote cluster.
+
+The `body` must include:
+
+| Key | Type | Description |
+|---|---|---|
+| `:remote_cluster` | String | The name of the remote cluster (as configured in Elasticsearch) |
+| `:leader_index` | String | The name of the index to replicate on the remote cluster |
+
+```ruby
+ccr.follow("my-follower-index", {
+  remote_cluster: "us-east-cluster",
+  leader_index:   "my-leader-index"
+})
+```
+
+Optional body parameters (passed in the same hash) include `max_read_request_operation_count`, `max_outstanding_read_requests`, and other tuning options supported by the Elasticsearch API.
+
+### `ccr.get_follower_info(index_pattern, params)`
+
+Returns the parameters and current replication status for follower indices matching the given pattern.
+
+```ruby
+# Status for a specific follower
+ccr.get_follower_info("my-follower-index")
+
+# Status for all follower indices
+ccr.get_follower_info("*")
+```
+
+The response includes per-shard replication lag and error information.
+
+### `ccr.pause_follow(follower_index, params)`
+
+Pauses replication on a follower index. The follower index remains open and readable but stops receiving updates from the leader.
+
+```ruby
+ccr.pause_follow("my-follower-index")
+```
+
+### `ccr.unfollow(follower_index, params)`
+
+Converts a follower index into a regular index, permanently stopping replication. The follower index must be **paused and closed** before calling this method.
+
+```ruby
+# 1. Pause replication
+ccr.pause_follow("my-follower-index")
+
+# 2. Close the index
+client.index("my-follower-index").close
+
+# 3. Unfollow — the index becomes a regular writable index
+ccr.unfollow("my-follower-index")
+
+# 4. Reopen if needed
+client.index("my-follower-index").open
+```
+
+<Warning>
+  `unfollow` is permanent. Once an index stops following its leader it cannot resume replication. Use `pause_follow` if you only want to temporarily halt replication.
+</Warning>
+
+---
+
+## Auto-follow patterns
+
+Auto-follow patterns let Elasticsearch automatically create follower indices whenever new indices are created on a remote cluster that match the specified patterns.
+
+### `ccr.auto_follow(pattern_name, body, params)`
+
+Creates or updates an auto-follow pattern.
+
+| Body key | Type | Description |
+|---|---|---|
+| `:remote_cluster` | String | The remote cluster to watch. Required. |
+| `:leader_index_patterns` | Array | Simple index patterns to match on the remote cluster. |
+| `:leader_index_exclusion_patterns` | Array | Patterns to exclude from auto-following. |
+| `:follow_index_pattern` | String | Name template for follower indices. Use `{{leader_index}}` as a placeholder. |
+
+```ruby
+ccr.auto_follow("logs-pattern", {
+  remote_cluster:             "us-east-cluster",
+  leader_index_patterns:      ["logs-*"],
+  leader_index_exclusion_patterns: ["logs-archive-*"],
+  follow_index_pattern:       "{{leader_index}}-replica"
+})
+```
+
+### `ccr.get_auto_follow(params)`
+
+Returns all auto-follow patterns, or a specific pattern when `:pattern_name` is passed in `params`.
+
+```ruby
+# All patterns
+ccr.get_auto_follow
+
+# Specific pattern
+ccr.get_auto_follow(pattern_name: "logs-pattern")
+```
+
+### `ccr.delete_auto_follow(pattern_name, params)`
+
+Deletes an auto-follow pattern. Existing follower indices created by this pattern are not affected.
+
+```ruby
+ccr.delete_auto_follow("logs-pattern")
+```
+
+---
+
+## Complete CCR setup workflow
+
+<Steps>
+  <Step title="Configure the remote cluster">
+    Add the remote cluster connection in Elasticsearch's cluster settings (outside ElastomerClient):
+
+    ```json
+    PUT /_cluster/settings
+    {
+      "persistent": {
+        "cluster.remote.us-east-cluster.seeds": ["10.0.1.5:9300"]
+      }
+    }
+    ```
+  </Step>
+
+  <Step title="Create a follower index">
+    ```ruby
+    ccr = client.ccr
+
+    ccr.follow("orders-follower", {
+      remote_cluster: "us-east-cluster",
+      leader_index:   "orders"
+    })
+
+    puts "Follower index created and replication started"
+    ```
+  </Step>
+
+  <Step title="Check replication status">
+    ```ruby
+    info = ccr.get_follower_info("orders-follower")
+
+    info["follower_indices"].each do |fi|
+      puts "#{fi['follower_index']}: #{fi['status']}"
+      fi["shards"].each do |shard|
+        lag = shard["leader_global_checkpoint"] - shard["follower_global_checkpoint"]
+        puts "  shard #{shard['shard_id']}: #{lag} ops behind"
+      end
+    end
+    ```
+  </Step>
+
+  <Step title="Set up auto-follow for future indices">
+    ```ruby
+    ccr.auto_follow("orders-auto", {
+      remote_cluster:        "us-east-cluster",
+      leader_index_patterns: ["orders-*"],
+      follow_index_pattern:  "{{leader_index}}-replica"
+    })
+
+    puts "Auto-follow pattern created"
+    ```
+  </Step>
+
+  <Step title="Promote a follower to a standalone index (failover)">
+    ```ruby
+    # Pause and close the follower
+    ccr.pause_follow("orders-follower")
+    client.index("orders-follower").close
+
+    # Permanently convert to a regular index
+    ccr.unfollow("orders-follower")
+
+    # Reopen for writes
+    client.index("orders-follower").open
+
+    puts "orders-follower is now a standalone writable index"
+    ```
+  </Step>
+</Steps>
+
+---
+
+## Method reference
+
+| Method | HTTP | Description |
+|---|---|---|
+| `ccr.follow(follower, body)` | `PUT /{follower}/_ccr/follow` | Create a follower index |
+| `ccr.get_follower_info(pattern)` | `GET /{pattern}/_ccr/info` | Get follower index status |
+| `ccr.pause_follow(follower)` | `POST /{follower}/_ccr/pause_follow` | Pause replication |
+| `ccr.unfollow(follower)` | `POST /{follower}/_ccr/unfollow` | Stop following (permanent) |
+| `ccr.auto_follow(name, body)` | `PUT /_ccr/auto_follow/{name}` | Create auto-follow pattern |
+| `ccr.get_auto_follow` | `GET /_ccr/auto_follow{/pattern_name}` | Get auto-follow patterns |
+| `ccr.delete_auto_follow(name)` | `DELETE /_ccr/auto_follow/{name}` | Delete auto-follow pattern |

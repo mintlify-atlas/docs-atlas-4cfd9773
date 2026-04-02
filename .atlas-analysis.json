@@ -1,0 +1,97 @@
+{
+  "projectType": "sdk-library",
+  "projectName": "ElastomerClient",
+  "projectDescription": "A low-level Ruby gem providing a direct, one-to-one mapping to the Elasticsearch HTTP API with support for indexing, searching, cluster management, bulk operations, and cross-cluster replication.",
+  "theme": "luma",
+  "primaryColor": "#0dabc7",
+  "lightColor": "#8bc404",
+  "darkColor": "#eebf42",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "configuration"
+            ]
+          },
+          {
+            "group": "Core API",
+            "pages": [
+              "api/client",
+              "api/index",
+              "api/docs",
+              "api/cluster",
+              "api/nodes",
+              "api/templates"
+            ]
+          },
+          {
+            "group": "Advanced Features",
+            "pages": [
+              "advanced/bulk-indexing",
+              "advanced/multi-search",
+              "advanced/scan-scroll",
+              "advanced/reindex",
+              "advanced/tasks"
+            ]
+          },
+          {
+            "group": "Operations",
+            "pages": [
+              "operations/snapshots",
+              "operations/ccr",
+              "operations/notifications",
+              "operations/error-handling"
+            ]
+          },
+          {
+            "group": "Development",
+            "pages": [
+              "development/contributing",
+              "development/changelog"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "One-to-one mapping of the Elasticsearch HTTP API",
+    "Index management: create, delete, update settings and mappings",
+    "Document operations: index, get, search, delete, update",
+    "Cluster health, state, and settings management",
+    "Bulk indexing with block-based DSL and streaming support",
+    "Scan/scroll iterators for paginating large result sets",
+    "Multi-search for batching multiple queries in one request",
+    "Snapshot and restore for backup and disaster recovery",
+    "Cross-cluster replication (CCR) support",
+    "ActiveSupport notifications integration for instrumentation",
+    "Request body compression and Opaque ID header support",
+    "Configurable Faraday HTTP adapter (Net::HTTP, Excon, etc.)",
+    "Strict parameter validation against versioned REST API specs"
+  ],
+  "publicApiSurface": [
+    "ElastomerClient::Client.new(host:, port:, url:, adapter:, ...)",
+    "client.ping / client.available?",
+    "client.version / client.semantic_version",
+    "client.index(name) => Index",
+    "client.docs(name, type) => Docs",
+    "client.cluster => Cluster",
+    "client.nodes(node_id) => Nodes",
+    "client.bulk(body, params) { |b| ... }",
+    "client.multi_search(body, params) { |m| ... }",
+    "client.scroll(query, opts) => Scroller",
+    "client.scan(query, opts) => Scroller",
+    "client.snapshot(repository, name) => Snapshot",
+    "client.ccr => Ccr",
+    "client.tasks => Tasks",
+    "client.reindex(body, params) => Hash",
+    "ElastomerClient::Notifications (ActiveSupport instrumentation)",
+    "ElastomerClient::Client::Error and subclasses (fatal?/retry?)"
+  ]
+}

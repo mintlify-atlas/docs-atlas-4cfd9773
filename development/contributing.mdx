@@ -1,0 +1,160 @@
+---
+title: "Contributing"
+description: "How to set up a development environment and contribute to ElastomerClient"
+---
+
+ElastomerClient welcomes contributions. This guide covers everything you need to get a working development environment, run the test suite, and release new versions of the gem.
+
+## Prerequisites
+
+- **Ruby 3.2** — the only supported Ruby version
+- **Docker** — required to run Elasticsearch locally via Docker Compose
+
+## Setting up the project
+
+<Steps>
+  <Step title="Clone the repository">
+    Clone the repo and navigate into the project directory.
+
+    ```bash
+    git clone https://github.com/github/elastomer-client.git
+    cd elastomer-client
+    ```
+  </Step>
+  <Step title="Bootstrap the project">
+    Run the bootstrap script to install dependencies.
+
+    ```bash
+    script/bootstrap
+    ```
+  </Step>
+  <Step title="Start Elasticsearch with Docker">
+    Start one or more Elasticsearch instances using Docker Compose. Choose the profile that matches your needs.
+
+    <CodeGroup>
+
+    ```bash All profiles (ES 5 and ES 8)
+    docker compose --project-directory docker --profile all up
+    ```
+
+    ```bash ES 8 only
+    docker compose --project-directory docker --profile es8 up
+    ```
+
+    ```bash ES 5 only
+    docker compose --project-directory docker --profile es5 up
+    ```
+
+    </CodeGroup>
+  </Step>
+  <Step title="Run the tests">
+    Run the test suite against the Elasticsearch version you started. Set `ES_PORT` to match the running instance.
+
+    <CodeGroup>
+
+    ```bash ES 8
+    ES_PORT=9208 rake test
+    ```
+
+    ```bash ES 5
+    ES_PORT=9205 rake test
+    ```
+
+    </CodeGroup>
+  </Step>
+</Steps>
+
+## Cross-cluster replication (CCR)
+
+CCR mode requires a non-production Elasticsearch license and a separate setup script.
+
+<Note>
+  The `setup-ccr` script requires a non-production license key. CCR is an
+  Elasticsearch Platinum/Enterprise feature and cannot be tested with a basic
+  license.
+</Note>
+
+Start the CCR cluster:
+
+```bash
+script/setup-ccr up "{non-production license}"
+```
+
+Run CCR tests using both a primary and replica port:
+
+```bash
+ES_PORT=9208 ES_REPLICA_PORT=9209 rake test
+```
+
+## Releasing a new version
+
+<Steps>
+  <Step title="Create a branch">
+    Create a new branch from `main`.
+
+    ```bash
+    git checkout main && git pull
+    git checkout -b release/vX.Y.Z
+    ```
+  </Step>
+  <Step title="Bump the version">
+    Update the version constant in `lib/elastomer_client/version.rb`.
+
+    ```ruby
+    module ElastomerClient
+      VERSION = "X.Y.Z"
+    end
+    ```
+  </Step>
+  <Step title="Update the changelog">
+    Add an entry for the new version to `CHANGELOG.md`, following the existing format.
+  </Step>
+  <Step title="Commit and tag">
+    Commit your changes and create a version tag with the `v` prefix.
+
+    ```bash
+    git add lib/elastomer_client/version.rb CHANGELOG.md
+    git commit -m "Release vX.Y.Z"
+    git tag vX.Y.Z
+    ```
+  </Step>
+  <Step title="Build the gem">
+    Run `rake build` to produce the `.gem` file in the `pkg/` directory.
+
+    ```bash
+    rake build
+    ```
+  </Step>
+  <Step title="Verify locally">
+    Install the gem locally and confirm it loads correctly.
+
+    ```bash
+    gem install pkg/elastomer-client-X.Y.Z.gem
+    ```
+
+    Then open an `irb` session and verify:
+
+    ```ruby
+    require "elastomer_client/client"
+    ElastomerClient::Client.new.cluster.health
+    ```
+  </Step>
+  <Step title="Push and open a pull request">
+    Push both your branch and the tag, then open a pull request against `main`.
+
+    ```bash
+    git push origin release/vX.Y.Z
+    git push origin vX.Y.Z
+    ```
+
+    Request a review from a maintainer. Once approved, merge to `main`.
+  </Step>
+  <Step title="Publish to RubyGems (optional)">
+    After merging, pull down a fresh copy of `main` and run `rake release` to publish to RubyGems.
+
+    ```bash
+    git checkout main && git pull
+    rake release
+    ```
+  </Step>
+</Steps>

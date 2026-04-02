@@ -1,0 +1,198 @@
+---
+title: "Nodes"
+description: "Retrieve information and statistics about Elasticsearch cluster nodes"
+---
+
+The `Nodes` class provides access to node-level Elasticsearch API commands: node information, statistics, and hot-thread diagnostics.
+
+## Getting a Nodes instance
+
+```ruby
+# All nodes (default)
+nodes = client.nodes
+
+# A specific node by ID
+nodes = client.nodes("node-id-abc123")
+
+# Multiple nodes
+nodes = client.nodes(%w[node-id-1 node-id-2])
+
+# Only the local node
+nodes = client.nodes("_local")
+
+# Explicitly all nodes
+nodes = client.nodes("_all")
+```
+
+<ParamField path="node_id" type="string | string[]">
+  Node identifier(s). Pass `nil` or omit to target all nodes. Pass `"_local"`
+  for the node the client is connected to. Pass `"_all"` to explicitly target
+  every node.
+</ParamField>
+
+---
+
+## Node information
+
+### `info(params = {})`
+
+Returns static configuration information about nodes: installed plugins, OS and JVM details, thread pool sizes, network settings, and more.
+
+```ruby
+# All information for all nodes
+client.nodes.info
+
+# Specific info categories
+client.nodes.info(info: "os")
+client.nodes.info(info: "jvm")
+client.nodes.info(info: %w[os jvm process])
+client.nodes.info(info: "_all")
+```
+
+Example response structure:
+
+```ruby
+result = client.nodes.info(info: "jvm")
+result["nodes"].each do |node_id, node|
+  puts "#{node["name"]}: #{node["jvm"]["version"]}"
+end
+```
+
+<ParamField path="params.info" type="string | string[]">
+  One or more information categories to return:
+
+  - `settings` — node settings
+  - `os` — operating system information
+  - `process` — process statistics
+  - `jvm` — JVM configuration and version
+  - `thread_pool` — thread pool sizes
+  - `network` — network settings
+  - `transport` — transport layer configuration
+  - `http` — HTTP layer configuration
+  - `plugins` — installed plugins
+
+  Omit to return all available information.
+</ParamField>
+
+<ParamField path="params.node_id" type="string | string[]">
+  Override the node scope for this call only.
+</ParamField>
+
+---
+
+## Node statistics
+
+### `stats(params = {})`
+
+Returns runtime metrics for nodes: JVM heap, CPU, indexing rates, search latency, thread pool queues, and more.
+
+```ruby
+# All stats for all nodes
+client.nodes.stats
+
+# Specific stat groups
+client.nodes.stats(stats: "thread_pool")
+client.nodes.stats(stats: %w[os process])
+
+# Stats for a specific node
+client.nodes("node-id-abc123").stats(stats: %w[jvm indices])
+```
+
+Example — checking heap usage across all nodes:
+
+```ruby
+client.nodes.stats(stats: "jvm")["nodes"].each do |node_id, node|
+  heap_used    = node.dig("jvm", "mem", "heap_used_in_bytes")
+  heap_max     = node.dig("jvm", "mem", "heap_max_in_bytes")
+  heap_percent = (heap_used.to_f / heap_max * 100).round(1)
+  puts "#{node["name"]}: #{heap_percent}% heap used"
+end
+```
+
+<ParamField path="params.stats" type="string | string[]">
+  One or more stat groups: `indices`, `os`, `process`, `jvm`, `transport`,
+  `http`, `fs`, `breaker`, `thread_pool`, `discovery`. Omit for all stats.
+</ParamField>
+
+<ParamField path="params.node_id" type="string | string[]">
+  Override the node scope for this call only.
+</ParamField>
+
+---
+
+## Hot threads
+
+### `hot_threads(params = {})`
+
+Returns a human-readable breakdown of what the most CPU-intensive threads are doing. The return value is a formatted string (with newlines), not a Hash.
+
+```ruby
+puts client.nodes.hot_threads
+# ::: {node-1}{abc123...}{...}
+# Hot threads at 2024-04-02T10:00:00.000Z, interval=500ms, busiestThreads=3, ignoreIdleThreads=true:
+#
+#   99.9% (499.5ms out of 500ms) cpu usage by thread 'elasticsearch[node-1][search][T#1]'
+#    10/10 snapshots sharing following 5 elements
+#      ...
+
+# Narrow to a specific node
+puts client.nodes("node-id-abc123").hot_threads
+
+# Change sampling parameters
+puts client.nodes.hot_threads(threads: 5, interval: "1s", type: "wait")
+```
+
+<ParamField path="params.threads" type="number">
+  Number of hot threads to report per node (default 3).
+</ParamField>
+
+<ParamField path="params.interval" type="string">
+  Sampling interval (default `"500ms"`).
+</ParamField>
+
+<ParamField path="params.type" type="string">
+  Thread state to sample: `"cpu"` (default), `"wait"`, or `"block"`.
+</ParamField>
+
+<ParamField path="params.node_id" type="string | string[]">
+  Override the node scope for this call only.
+</ParamField>
+
+<Note>
+  `hot_threads` returns a plain String, not a Hash. It is intended for
+  human consumption in diagnostic workflows.
+</Note>
+
+---
+
+## Common patterns
+
+<CodeGroup>
+
+```ruby Check a specific node
+node_id = "abc123def456"
+info = client.nodes(node_id).info(info: %w[jvm os])
+node = info["nodes"][node_id]
+
+puts node["jvm"]["version"]
+puts node["os"]["name"]
+```
+
+```ruby Find all data nodes
+all_info = client.nodes.info(info: "settings")
+data_nodes = all_info["nodes"].select do |_id, node|
+  node.dig("settings", "node", "data") == "true"
+end
+puts "Data nodes: #{data_nodes.keys}"
+```
+
+```ruby Monitor thread pool queues
+client.nodes.stats(stats: "thread_pool")["nodes"].each do |_id, node|
+  node["thread_pool"].each do |pool_name, pool|
+    next if pool["queue"].to_i.zero?
+    puts "#{node["name"]} #{pool_name}: #{pool["queue"]} queued, #{pool["rejected"]} rejected"
+  end
+end
+```
+
+</CodeGroup>

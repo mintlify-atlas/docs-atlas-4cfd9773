@@ -1,0 +1,155 @@
+---
+title: "Multi-Search"
+description: "Execute multiple search queries in a single Elasticsearch request"
+---
+
+The multi-search API (also known as `_msearch`) lets you bundle multiple search queries into a single HTTP request. Elasticsearch executes all queries in parallel and returns results in the same order the queries were submitted.
+
+## Direct body form
+
+Pass a pre-formatted newline-delimited body and optional params:
+
+```ruby
+body = <<~NDJSON
+  {"index":"books"}
+  {"query":{"match":{"author":"Martin Fowler"}}}
+  {"index":"books"}
+  {"query":{"range":{"year":{"gte":2000}}},"size":5}
+NDJSON
+
+response = client.multi_search(body)
+results  = response["responses"]
+puts results.length  # => 2
+```
+
+`client.msearch` is an alias for `client.multi_search` — both are equivalent.
+
+## Block-based form
+
+The block form accumulates searches and dispatches a single request at the end:
+
+```ruby
+response = client.multi_search(index: "books") do |m|
+  m.search({ query: { match: { author: "Martin Fowler" } } })
+  m.search({ query: { range: { year: { gte: 2000 } } }, size: 5 })
+  m.search({ query: { match_all: {} }, size: 0, aggs: { by_year: { terms: { field: "year" } } } })
+end
+
+results = response["responses"]
+```
+
+<Note>
+  The block receives a `MultiSearch` instance. Each call to `m.search` appends a header/body pair to the request. The request is dispatched automatically when the block ends.
+</Note>
+
+## `MultiSearch#search`
+
+<ParamField path="m.search" type="method">
+  Add a search to the multi-search batch.
+
+  - **query** (Hash, required) — the search query body, e.g. `{ query: { match_all: {} } }`.
+  - **params** (Hash, optional) — per-search header params such as `:index` or `:type` to override the default set at the block level.
+
+  ```ruby
+  client.multi_search do |m|
+    # Use the default index from the block-level params (none set here)
+    m.search({ query: { match: { title: "Ruby" } } }, index: "books")
+    m.search({ query: { match: { title: "Python" } } }, index: "books")
+  end
+  ```
+</ParamField>
+
+## Index scoping
+
+You can scope searches at three levels, from broadest to most specific:
+
+| Level | How |
+|---|---|
+| URI-level default | Pass `index:` to `client.multi_search` |
+| Per-search header | Pass `index:` to `m.search` as a param |
+| Query body | Include `_index` filters inside the query itself |
+
+```ruby
+# URI-level default: all searches hit "books" unless overridden
+client.multi_search(index: "books") do |m|
+  m.search({ query: { match_all: {} } })                        # hits "books"
+  m.search({ query: { match_all: {} } }, index: "magazines")   # hits "magazines"
+end
+```
+
+## Processing results
+
+The response hash has a `"responses"` key containing an array of individual search result hashes, in the same order the searches were added:
+
+```ruby
+response = client.multi_search(index: "books") do |m|
+  m.search({ query: { match: { author: "Martin Fowler" } } })
+  m.search({ query: { match: { author: "Robert Martin" } } })
+end
+
+response["responses"].each_with_index do |result, i|
+  if result["error"]
+    warn "Search #{i} failed: #{result["error"]["reason"]}"
+  else
+    hits = result["hits"]["hits"]
+    puts "Search #{i}: #{hits.size} results"
+    hits.each { |doc| puts "  - #{doc["_source"]["title"]}" }
+  end
+end
+```
+
+<Warning>
+  Individual searches inside an msearch request can fail independently. Always check for an `"error"` key in each response entry before accessing `"hits"`.
+</Warning>
+
+## Complete example
+
+```ruby
+require "elastomer_client"
+
+client = ElastomerClient::Client.new(url: "http://localhost:9200")
+
+# Run three searches in one round trip
+response = client.multi_search(index: "books") do |m|
+  # 1. Full-text search on title
+  m.search({
+    query: { match: { title: "design patterns" } },
+    size: 3
+  })
+
+  # 2. Filter by publication year
+  m.search({
+    query: { range: { year: { gte: 2000, lte: 2010 } } },
+    sort:  [{ year: { order: "asc" } }],
+    size:  5
+  })
+
+  # 3. Aggregation — count books per author (no hits needed)
+  m.search({
+    query: { match_all: {} },
+    size:  0,
+    aggs:  {
+      authors: {
+        terms: { field: "author.keyword", size: 10 }
+      }
+    }
+  })
+end
+
+title_hits, year_hits, agg_response = response["responses"]
+
+puts "=== Title search ==="
+title_hits["hits"]["hits"].each { |d| puts d["_source"]["title"] }
+
+puts "\n=== Books 2000–2010 ==="
+year_hits["hits"]["hits"].each { |d| puts "#{d["_source"]["year"]}: #{d["_source"]["title"]}" }
+
+puts "\n=== Top authors ==="
+agg_response.dig("aggregations", "authors", "buckets").each do |bucket|
+  puts "#{bucket["key"]}: #{bucket["doc_count"]} book(s)"
+end
+```
+
+<Tip>
+  Multi-search is ideal for dashboards that need to populate several widgets simultaneously. Batching reduces round-trip latency compared to issuing each query independently.
+</Tip>

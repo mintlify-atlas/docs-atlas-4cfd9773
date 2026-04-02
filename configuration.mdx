@@ -1,0 +1,187 @@
+---
+title: "Configuration"
+description: "Configure the ElastomerClient connection, adapters, timeouts, and authentication"
+---
+
+`ElastomerClient::Client.new` accepts keyword arguments to control every aspect of the connection. All parameters are optional and have sensible defaults.
+
+```ruby
+require 'elastomer_client/client'
+
+client = ElastomerClient::Client.new(
+  url:          'http://localhost:9200',
+  read_timeout: 5,
+  open_timeout: 2
+)
+```
+
+## Connection parameters
+
+<ParamField query="host" type="string" default="localhost">
+  The Elasticsearch host as a string. Ignored when `url` is provided.
+</ParamField>
+
+<ParamField query="port" type="number" default="9200">
+  The port number of the Elasticsearch server. Ignored when `url` is provided.
+</ParamField>
+
+<ParamField query="url" type="string">
+  Full URL of the Elasticsearch server (e.g. `"http://my-host:9200"`). When provided, this overrides `host` and `port`.
+
+  ```ruby
+  ElastomerClient::Client.new(url: 'http://my-es-host:9200')
+  ```
+</ParamField>
+
+## Timeout parameters
+
+<ParamField query="open_timeout" type="number" default="2">
+  Seconds to wait when opening a new HTTP connection. This is configured once at initialization and applies to every connection. Keep it short — 1–2 seconds is typical.
+</ParamField>
+
+<ParamField query="read_timeout" type="number" default="5">
+  Seconds to wait for a response after the connection is open. This global default can be overridden per-request by passing `:read_timeout` directly to any method call.
+
+  ```ruby
+  # Override read timeout for a slow operation
+  client.cluster.health(
+    :wait_for_status => 'green',
+    :timeout         => '5s',
+    :read_timeout    => 7
+  )
+  ```
+</ParamField>
+
+## Adapter
+
+<ParamField query="adapter" type="string | symbol">
+  The Faraday adapter used for HTTP communication. Defaults to `Faraday.default_adapter` (which is `:net_http`).
+
+  Elasticsearch works best with persistent connections. The `:net_http_persistent` adapter keeps connections open between requests. The `:excon` adapter can offer better throughput in high-concurrency scenarios.
+</ParamField>
+
+<CodeGroup>
+
+```ruby Net::HTTP (default)
+ElastomerClient::Client.new
+```
+
+```ruby net_http_persistent
+require 'net-http-persistent'
+
+ElastomerClient::Client.new(
+  url:     'http://localhost:9200',
+  adapter: :net_http_persistent
+)
+```
+
+```ruby Excon
+require 'excon'
+
+ElastomerClient::Client.new(
+  url:     'http://localhost:9200',
+  adapter: :excon
+)
+```
+
+</CodeGroup>
+
+<Warning>
+  When using persistent connections (`:net_http_persistent` or similar), enable `opaque_id: true`. Without it, a stale persistent connection can return data from a previous request, causing silent data leaks. The `X-Opaque-Id` middleware detects mismatches between request and response IDs and raises an `OpaqueIdError` before your application processes the wrong data.
+</Warning>
+
+## Request behavior
+
+<ParamField query="opaque_id" type="boolean" default="false">
+  When `true`, the client attaches a unique `X-Opaque-Id` header to every request. Elasticsearch echoes this header back in the response, and the client middleware verifies that the value matches. If the IDs disagree — which can happen when a persistent connection returns a stale response — an `OpaqueIdError` is raised and the connection is reset.
+
+  ```ruby
+  ElastomerClient::Client.new(
+    adapter:   :net_http_persistent,
+    opaque_id: true
+  )
+  ```
+
+  If you are not using persistent connections, you do not need this option.
+</ParamField>
+
+<ParamField query="max_request_size" type="number" default="262144000">
+  Maximum allowed request body size in bytes. Defaults to 250 MB (`2**20 * 250`). Requests that exceed this limit are rejected before they are sent to Elasticsearch.
+</ParamField>
+
+<ParamField query="strict_params" type="boolean" default="false">
+  When `false` (the default), unknown query parameters are silently dropped before the request is sent. When `true`, passing an unrecognized parameter raises an exception. Enable this during development to catch typos and invalid API usage early.
+</ParamField>
+
+<ParamField query="es_version" type="string">
+  The Elasticsearch version string, for example `"5.6.6"` or `"8.13.0"`. When provided, the client uses this value directly and skips the HTTP request it would otherwise make to detect the version. Set this in production to reduce connection overhead at startup.
+
+  ```ruby
+  ElastomerClient::Client.new(es_version: '8.13.0')
+  ```
+</ParamField>
+
+## Body compression
+
+<ParamField query="compress_body" type="boolean" default="false">
+  When `true`, request bodies are compressed with zlib before being sent to Elasticsearch. Useful for large bulk indexing payloads over high-latency networks.
+</ParamField>
+
+<ParamField query="compression" type="number" default="Zlib::DEFAULT_COMPRESSION">
+  The zlib compression level, from `0` (no compression) to `9` (maximum compression). Only takes effect when `compress_body: true`.
+
+  ```ruby
+  ElastomerClient::Client.new(
+    compress_body: true,
+    compression:   6
+  )
+  ```
+</ParamField>
+
+## Authentication
+
+<ParamField query="basic_auth" type="object">
+  A hash containing `:username` and `:password` for HTTP Basic authentication.
+
+  ```ruby
+  ElastomerClient::Client.new(
+    url:        'https://my-es-host:9200',
+    basic_auth: { username: 'elastic', password: 'changeme' }
+  )
+  ```
+</ParamField>
+
+<ParamField query="token_auth" type="string">
+  An authentication token string for Bearer token authentication. When both `token_auth` and `basic_auth` are provided, `token_auth` takes precedence.
+
+  ```ruby
+  ElastomerClient::Client.new(
+    url:        'https://my-es-host:9200',
+    token_auth: 'my-api-token'
+  )
+  ```
+</ParamField>
+
+## Custom Faraday middleware
+
+`ElastomerClient::Client.new` accepts an optional block that receives the `Faraday::Connection` object. Use this to insert any Faraday middleware into the stack — for example, to add retry logic:
+
+```ruby
+retry_options = {
+  max:      2,
+  interval: 0.05,
+  methods:  [:get]
+}
+
+ElastomerClient::Client.new do |connection|
+  connection.request :retry, retry_options
+end
+```
+
+The block is called after the built-in middleware (JSON encoding, compression, authentication) is configured but before the adapter is set. You can combine it with any other constructor option:
+
+```ruby
+ElastomerClient::Client.new(url: 'http://localhost:9200', adapter: :net_http_persistent) do |conn|
+  conn.request :retry, max: 3, interval: 0.1, methods: [:get, :head]
+end
+```

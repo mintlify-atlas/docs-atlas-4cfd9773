@@ -1,0 +1,444 @@
+---
+title: "Documents"
+description: "Index, search, retrieve, update, and delete Elasticsearch documents"
+---
+
+The `Docs` class exposes all document-level Elasticsearch API commands: indexing, retrieval, search, update, deletion, and more.
+
+## Getting a Docs instance
+
+```ruby
+# Via the client directly
+docs = client.docs("blog", "post")
+
+# Via an Index instance (index name pre-set)
+docs = client.index("blog").docs
+
+# Both are equivalent
+docs.name  #=> "blog"
+docs.type  #=> "post"
+```
+
+You can also omit the index and type for cross-index operations:
+
+```ruby
+# Multiple indices, single type
+client.docs(%w[blog users], "post")
+
+# Omit both for cross-index operations like multi_get
+client.docs
+```
+
+<Note>
+  In Elasticsearch 8+, the type argument is ignored and `_doc` is used automatically. Pass
+  `nil` or omit the type when targeting an ES 8 cluster.
+</Note>
+
+---
+
+## Complete CRUD example
+
+<Steps>
+  <Step title="Create a document">
+    ```ruby
+    docs = client.docs("blog", "post")
+
+    result = docs.index(
+      _id:       "1",
+      author:    "Michael Lopp",
+      title:     "The Nerd Handbook",
+      post_date: "2007-11-11",
+      body:      "A nerd needs a project because a nerd builds stuff..."
+    )
+    result["result"]  #=> "created"
+    ```
+  </Step>
+  <Step title="Retrieve the document">
+    ```ruby
+    doc = docs.get(id: "1")
+    doc["_source"]["title"]  #=> "The Nerd Handbook"
+    ```
+  </Step>
+  <Step title="Update the document">
+    ```ruby
+    docs.update(
+      { doc: { title: "The Nerd Handbook (Revised)" } },
+      id: "1"
+    )
+    ```
+  </Step>
+  <Step title="Delete the document">
+    ```ruby
+    docs.delete(id: "1")
+    ```
+  </Step>
+</Steps>
+
+---
+
+## Indexing
+
+### `index(document, params = {})`
+
+Adds or replaces a document. If the document contains an `_id` field, a `PUT` request is used (create-or-replace semantics). Without an ID, `POST` is used and Elasticsearch generates one.
+
+```ruby
+# Auto-generated ID
+docs.index(
+  author:    "Michael Lopp",
+  title:     "The Nerd Handbook",
+  post_date: "2007-11-11",
+  body:      post_body
+)
+
+# Explicit ID — updates the document if it already exists
+docs.index(
+  _id:    "wM0OSFhDQXGZAWDf0-drSA",
+  author: "Michael Lopp",
+  title:  "The Nerd Handbook",
+  body:   post_body
+)
+
+# Supply index and type inside the document
+client.docs.index(
+  _index: "blog",
+  _type:  "post",
+  _id:    127,
+  title:  "The Nerd Handbook",
+  body:   post_body
+)
+```
+
+### Indexing directives
+
+These special keys are extracted from the document Hash before indexing. They control how Elasticsearch processes the document rather than becoming part of the stored `_source`.
+
+<ParamField path="_id" type="string | number">
+  Document ID. Triggers PUT (upsert) semantics when present.
+</ParamField>
+
+<ParamField path="_type" type="string">
+  Document type. Deprecated in ES 7+; ignored in ES 8+.
+</ParamField>
+
+<ParamField path="_version" type="number">
+  Expected version number for optimistic concurrency control.
+</ParamField>
+
+<ParamField path="_version_type" type="string">
+  Version type: `"internal"`, `"external"`, or `"external_gte"`.
+</ParamField>
+
+<ParamField path="_op_type" type="string">
+  `"index"` (default) or `"create"`. Use `"create"` to fail if the document already exists.
+</ParamField>
+
+<ParamField path="_routing" type="string">
+  Custom routing value. Determines which shard the document lands on.
+</ParamField>
+
+<ParamField path="_parent" type="string">
+  Parent document ID (ES 5.x and earlier).
+</ParamField>
+
+<ParamField path="_refresh" type="boolean | string">
+  Control when changes become visible: `true`, `false`, or `"wait_for"`.
+</ParamField>
+
+<ParamField path="_wait_for_active_shards" type="number | string">
+  Number of active shard copies required before proceeding (ES 5.x+).
+</ParamField>
+
+---
+
+## Retrieval
+
+### `get(params = {})`
+
+Retrieves a document by ID:
+
+```ruby
+doc = docs.get(id: "1")
+doc["_source"]   #=> { "title" => "...", "author" => "..." }
+doc["_version"]  #=> 1
+```
+
+<ParamField path="params.id" type="string | number" required>
+  Document ID.
+</ParamField>
+
+### `source(params = {})`
+
+Returns only the `_source` body, skipping metadata:
+
+```ruby
+source = docs.source(id: "1")
+source["title"]  #=> "The Nerd Handbook"
+```
+
+### `exists?(params = {})` / `exist?(params = {})`
+
+Returns `true` if the document exists:
+
+```ruby
+docs.exists?(id: "1")  #=> true
+docs.exists?(id: "no-such-id")  #=> false
+```
+
+---
+
+## Updating
+
+### `update(script, params = {})`
+
+Updates a document in-place using a script or partial document:
+
+```ruby
+# Partial document update
+docs.update(
+  { doc: { title: "Updated Title" } },
+  id: "1"
+)
+
+# Script-based update
+docs.update(
+  { script: { source: "ctx._source.views += params.count", params: { count: 1 } } },
+  id: "1"
+)
+```
+
+---
+
+## Deleting
+
+### `delete(params = {})`
+
+Deletes a document by ID:
+
+```ruby
+docs.delete(id: "1")
+#=> { "result" => "deleted", "_id" => "1", ... }
+```
+
+### `delete_by_query(query, params = nil)`
+
+Deletes all documents matching a query:
+
+```ruby
+# URI query parameter
+docs.delete_by_query(q: "title:nerd")
+
+# Request body query
+docs.delete_by_query(
+  { query: { match: { title: "nerd" } } },
+  index: "blog",
+  type:  "post"
+)
+```
+
+### `update_by_query(query, params = nil)`
+
+Applies a script to all documents matching a query:
+
+```ruby
+docs.update_by_query(
+  {
+    script: { source: "ctx._source.status = 'archived'" },
+    query:  { range: { post_date: { lt: "2020-01-01" } } }
+  }
+)
+```
+
+---
+
+## Searching
+
+### `search(query, params = nil)`
+
+Executes a search and returns matching documents:
+
+```ruby
+# Request body search
+results = docs.search(query: { match_all: {} })
+results["hits"]["hits"]   # array of matching documents
+results["hits"]["total"]  # total match count
+
+# URI request (query in params, no body)
+results = docs.search(q: "title:nerd", size: 10)
+
+# Cross-index search
+client.docs.search(
+  { query: { match: { title: "nerd" } } },
+  index:   %w[blog users],
+  type:    %w[post info],
+  timeout: "500ms"
+)
+```
+
+<ParamField path="query" type="object">
+  Search body Hash. When the Hash contains a `:query` key, it is sent as the
+  request body. Otherwise it is treated as URI parameters.
+</ParamField>
+
+### `count(query, params = nil)`
+
+Returns the number of matching documents without retrieving them:
+
+```ruby
+result = docs.count(query: { match: { title: "nerd" } })
+result["count"]  #=> 1
+
+# URI shorthand
+result = docs.count(q: "title:nerd")
+```
+
+### `search_shards(params = {})`
+
+Returns which indices and shards a search would hit:
+
+```ruby
+docs.search_shards(routing: "custom-key")
+#=> { "nodes" => { ... }, "shards" => [[...]] }
+```
+
+---
+
+## Multi-document operations
+
+### `multi_get(body, params = {})` / `mget(body, params = {})`
+
+Retrieves multiple documents in one request:
+
+```ruby
+result = client.docs.mget(
+  docs: [
+    { _index: "blog", _id: "1" },
+    { _index: "blog", _id: "2" },
+    { _index: "users", _id: "42" }
+  ]
+)
+result["docs"].each { |d| puts d["_source"] }
+```
+
+---
+
+## Explain and validate
+
+### `explain(query, params = nil)`
+
+Shows why a document did or did not match a query:
+
+```ruby
+docs.explain(
+  { query: { term: { "title" => "nerd" } } },
+  id: "1"
+)
+#=> { "matched" => true, "explanation" => { "value" => 1.2, ... } }
+
+# URI form
+docs.explain(q: "title:nerd", id: "1")
+```
+
+### `validate(query, params = nil)`
+
+Validates a query without executing it. Pass `explain: true` for detailed feedback:
+
+```ruby
+docs.validate(
+  { query: { query_string: { query: "*:*" } } },
+  explain: true
+)
+
+docs.validate(q: "post_date:not-a-date", explain: true)
+```
+
+---
+
+## Percolation
+
+### `percolate(body, params = {})`
+
+Matches a document against stored percolator queries:
+
+```ruby
+# Match a new document
+docs.percolate(doc: { author: "pea53" })
+
+# Match an existing document by ID
+docs.percolate(nil, id: "3")
+```
+
+### `percolate_count(body, params = {})`
+
+Returns the count of percolator queries that match:
+
+```ruby
+docs.percolate_count(doc: { author: "pea53" })
+#=> 4
+```
+
+---
+
+## Term vectors
+
+### `termvector(params = {})` / `termvectors(params = {})`
+
+Returns term frequency and position information for a document's fields:
+
+```ruby
+docs.termvector(id: "1")
+```
+
+### `multi_termvectors(body, params = {})`
+
+Fetches term vectors for multiple documents at once:
+
+```ruby
+docs.multi_termvectors(
+  docs: [
+    { _id: "1", fields: ["title"] },
+    { _id: "2", fields: ["body"] }
+  ]
+)
+```
+
+---
+
+## Bulk and scroll
+
+### `bulk(params = {}, &block)`
+
+Performs multiple index/delete operations in one HTTP request, scoped to the current index and type:
+
+```ruby
+docs.bulk do |b|
+  b.index(document1)
+  b.index(document2)
+  b.delete(document3)
+end
+```
+
+### `scroll(query, opts = {})` / `scan(query, opts = {})`
+
+Iterate over large result sets page by page:
+
+```ruby
+scroll = docs.scroll('{"query":{"match_all":{}},"sort":{"date":"desc"}}')
+scroll.each_document do |document|
+  puts document["_id"]
+  puts document["_source"]
+end
+```
+
+### `multi_search(params = {}, &block)`
+
+Executes multiple searches in a single request, scoped to the current index and type:
+
+```ruby
+docs.multi_search do |m|
+  m.search({ query: { match_all: {} }, size: 0 })
+  m.search({ query: { term: { author: "alice" } } })
+end
+```
+
+See [Multi-Search](/advanced/multi-search) for the full API.

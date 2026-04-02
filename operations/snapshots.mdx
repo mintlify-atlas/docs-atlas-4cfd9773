@@ -1,0 +1,267 @@
+---
+title: "Snapshots"
+description: "Create, restore, and manage Elasticsearch snapshots for backup and recovery"
+---
+
+Snapshots are point-in-time backups of an Elasticsearch cluster. ElastomerClient provides two classes for working with the Snapshot API: `Repository` for managing snapshot storage locations and `Snapshot` for creating, restoring, and managing individual snapshots.
+
+## Repositories
+
+A repository defines where Elasticsearch stores snapshots — for example, a shared filesystem, S3 bucket, or Azure Blob container. You must register a repository before taking any snapshots.
+
+```ruby
+repo = client.repository("my_backup_repo")
+```
+
+### `repository.exists?`
+
+Returns `true` if the repository is registered, `false` if it is not found.
+
+```ruby
+if client.repository("my_backup_repo").exists?
+  puts "Repository is ready"
+end
+```
+
+### `repository.create(body, params)`
+
+Registers a new repository. The `body` hash must include a `:type` and a `:settings` block appropriate for that type.
+
+```ruby
+repo = client.repository("my_backup_repo")
+
+repo.create({
+  type: "fs",
+  settings: {
+    location: "/mnt/es-snapshots",
+    compress: true
+  }
+})
+```
+
+### `repository.get(params)`
+
+Returns the repository type and settings.
+
+```ruby
+repo.get
+# => { "my_backup_repo" => { "type" => "fs", "settings" => { ... } } }
+```
+
+### `repository.update(body, params)`
+
+Updates the settings of an existing repository. Uses the same body format as `create`.
+
+```ruby
+repo.update({
+  type: "fs",
+  settings: {
+    location: "/mnt/es-snapshots",
+    compress: false,
+    readonly: true
+  }
+})
+```
+
+### `repository.status(params)`
+
+Returns status information for any snapshots currently in progress within this repository.
+
+```ruby
+repo.status
+```
+
+### `repository.delete(params)`
+
+Unregisters a repository. The underlying snapshot data is not removed.
+
+```ruby
+repo.delete
+```
+
+### Accessing snapshots from a repository
+
+A `Repository` instance can scope a `Snapshot` directly:
+
+```ruby
+snapshot = repo.snapshot("snapshot-2024-01-15")
+# equivalent to:
+snapshot = client.snapshot("my_backup_repo", "snapshot-2024-01-15")
+```
+
+---
+
+## Snapshots
+
+A `Snapshot` is scoped to a repository name and an optional snapshot name.
+
+```ruby
+# Scoped to a specific snapshot
+snap = client.snapshot("my_backup_repo", "snapshot-2024-01-15")
+
+# Scoped to a repository only (useful for listing all snapshots)
+all_snaps = client.snapshot("my_backup_repo")
+```
+
+### `snapshot.exists?`
+
+Returns `true` if the named snapshot exists in the repository.
+
+```ruby
+if client.snapshot("my_backup_repo", "snapshot-2024-01-15").exists?
+  puts "Snapshot found"
+end
+```
+
+### `snapshot.get(params)`
+
+Returns progress and metadata for the snapshot. If no name was provided at construction, returns all snapshots (`_all`) in the repository.
+
+```ruby
+snap = client.snapshot("my_backup_repo", "snapshot-2024-01-15")
+info = snap.get
+# => { "snapshots" => [ { "snapshot" => "snapshot-2024-01-15", "state" => "SUCCESS", ... } ] }
+```
+
+### `snapshot.status(params)`
+
+Returns detailed shard-level status for in-progress (or completed) snapshots. Can be called with or without a repository and snapshot name.
+
+```ruby
+# Status for a specific snapshot
+snap.status
+
+# Status for all in-progress snapshots cluster-wide
+client.snapshot.status
+```
+
+### `snapshot.create(body, params)`
+
+Creates the snapshot. The `body` is optional and can specify which indices to include or exclude.
+
+```ruby
+snap = client.snapshot("my_backup_repo", "snapshot-2024-01-15")
+
+snap.create({
+  indices: "logs-*,metrics-*",
+  ignore_unavailable: true,
+  include_global_state: false
+})
+```
+
+Pass `wait_for_completion: true` in `params` to block until the snapshot finishes:
+
+```ruby
+snap.create({}, { wait_for_completion: true })
+```
+
+### `snapshot.restore(body, params)`
+
+Restores a snapshot. By default all indices are restored; the body can narrow that down or rename indices on restore.
+
+```ruby
+snap = client.snapshot("my_backup_repo", "snapshot-2024-01-15")
+
+snap.restore({
+  indices: "logs-2024-01-15",
+  rename_pattern: "(.+)",
+  rename_replacement: "restored-$1",
+  include_global_state: false
+})
+```
+
+### `snapshot.delete(params)`
+
+Deletes a snapshot from the repository.
+
+```ruby
+client.snapshot("my_backup_repo", "snapshot-2024-01-15").delete
+```
+
+---
+
+## Complete backup and restore workflow
+
+<Steps>
+  <Step title="Register a snapshot repository">
+    ```ruby
+    repo = client.repository("nightly_backups")
+
+    unless repo.exists?
+      repo.create({
+        type: "fs",
+        settings: {
+          location: "/mnt/es-snapshots/nightly",
+          compress: true
+        }
+      })
+    end
+    ```
+  </Step>
+
+  <Step title="Create a snapshot">
+    ```ruby
+    today = Time.now.strftime("%Y-%m-%d")
+    snap  = repo.snapshot("nightly-#{today}")
+
+    snap.create(
+      {
+        indices: "*",
+        ignore_unavailable: true,
+        include_global_state: true
+      },
+      { wait_for_completion: true }
+    )
+
+    puts "Snapshot created: nightly-#{today}"
+    ```
+  </Step>
+
+  <Step title="Verify the snapshot succeeded">
+    ```ruby
+    info  = snap.get
+    state = info.dig("snapshots", 0, "state")
+
+    raise "Snapshot failed with state: #{state}" unless state == "SUCCESS"
+    ```
+  </Step>
+
+  <Step title="Restore the snapshot">
+    ```ruby
+    snap.restore({
+      indices: "*",
+      include_global_state: false,
+      ignore_unavailable: true
+    })
+
+    puts "Restore initiated"
+    ```
+  </Step>
+</Steps>
+
+---
+
+## Reference
+
+### Repository methods
+
+| Method | HTTP | Description |
+|---|---|---|
+| `repository.exists?` | `GET /_snapshot/{repository}` | Check if repository is registered |
+| `repository.get` | `GET /_snapshot/{repository}` | Get repository settings |
+| `repository.create(body)` | `PUT /_snapshot/{repository}` | Register a new repository |
+| `repository.update(body)` | `PUT /_snapshot/{repository}` | Update repository settings |
+| `repository.status` | `GET /_snapshot/{repository}/_status` | In-progress snapshot status |
+| `repository.delete` | `DELETE /_snapshot/{repository}` | Unregister repository |
+| `repository.snapshot(name)` | — | Return a scoped `Snapshot` instance |
+
+### Snapshot methods
+
+| Method | HTTP | Description |
+|---|---|---|
+| `snapshot.exists?` | `GET /_snapshot/{repository}/{snapshot}` | Check if snapshot exists |
+| `snapshot.get` | `GET /_snapshot/{repository}/{snapshot}` | Get snapshot info |
+| `snapshot.create(body)` | `PUT /_snapshot/{repository}/{snapshot}` | Take a snapshot |
+| `snapshot.status` | `GET /_snapshot/{repository}/{snapshot}/_status` | Detailed shard status |
+| `snapshot.restore(body)` | `POST /_snapshot/{repository}/{snapshot}/_restore` | Restore snapshot |
+| `snapshot.delete` | `DELETE /_snapshot/{repository}/{snapshot}` | Delete snapshot |

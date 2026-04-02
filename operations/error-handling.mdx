@@ -1,0 +1,215 @@
+---
+title: "Error Handling"
+description: "Understand and handle errors returned by ElastomerClient"
+---
+
+ElastomerClient classifies every error into one of two categories: **fatal** errors that indicate a fundamentally broken request, and **retryable** errors that may succeed if tried again. All errors inherit from `ElastomerClient::Client::Error`.
+
+ElastomerClient makes **no attempt to retry operations automatically**. Retry logic — including backoff strategy and retry limits — is left entirely to the caller.
+
+---
+
+## The base error class
+
+All client errors inherit from `ElastomerClient::Client::Error`, which itself inherits from `ElastomerClient::Error` (a subclass of `StandardError`).
+
+```ruby
+begin
+  client.docs("my-index").search({ query: { match_all: {} } })
+rescue ElastomerClient::Client::Error => err
+  puts err.message   # Human-readable error message
+  puts err.status    # HTTP status code (Integer or nil)
+  puts err.error     # Elasticsearch error body (Hash or nil)
+  puts err.fatal?    # true if request should not be retried
+  puts err.retry?    # true if request may be retried (inverse of fatal?)
+end
+```
+
+### `error.status`
+
+The HTTP status code from the Elasticsearch response, e.g. `404`, `503`. Returns `nil` if the error was not produced from an HTTP response (e.g. a connection failure).
+
+### `error.error`
+
+The `"error"` field from the Elasticsearch response body as a Hash, or `nil`. This contains structured details such as the Elasticsearch exception type, reason, and root cause.
+
+```ruby
+rescue ElastomerClient::Client::Error => err
+  if err.error
+    type   = err.error.dig("root_cause", 0, "type")
+    reason = err.error.dig("root_cause", 0, "reason")
+    puts "#{type}: #{reason}"
+  end
+end
+```
+
+### `error.fatal?` and `error.retry?`
+
+```ruby
+rescue ElastomerClient::Client::Error => err
+  if err.fatal?
+    # The request is fundamentally wrong — fix the request before retrying
+    raise
+  else
+    # Transient failure — safe to retry with backoff
+    sleep(1)
+    retry
+  end
+end
+```
+
+<Warning>
+  Most errors are **fatal by default**. Only `ServerError`, `TimeoutError`, `ConnectionFailed`, and `RejectedExecutionError` have `fatal?` set to `false`. Blindly retrying a fatal error will not help and may make things worse. Always check `err.fatal?` before retrying.
+</Warning>
+
+---
+
+## Implementing retry logic
+
+Because ElastomerClient does not auto-retry, you must implement your own strategy. A minimal retry loop:
+
+```ruby
+begin
+  docs.search(query)
+rescue ElastomerClient::Client::Error => err
+  raise if err.fatal?
+  retry # implement your own backoff
+end
+```
+
+A more complete example with exponential backoff:
+
+```ruby
+MAX_RETRIES = 3
+
+retries = 0
+begin
+  docs.search(query)
+rescue ElastomerClient::Client::Error => err
+  raise if err.fatal?
+  raise if retries >= MAX_RETRIES
+
+  retries += 1
+  sleep(2**retries)  # 2s, 4s, 8s
+  retry
+end
+```
+
+<Note>
+  Retrying during cluster overload adds more load to a cluster that is already struggling. Consider implementing circuit-breaker logic or back-pressure signalling rather than unconditional retries.
+</Note>
+
+---
+
+## Error class reference
+
+<Accordion title="All ElastomerClient error classes">
+
+**Base**
+
+| Class | Fatal? | Description |
+|---|---|---|
+| `ElastomerClient::Error` | — | Top-level parent for all ElastomerClient errors |
+| `ElastomerClient::Client::Error` | `true` | Base class for all client-level errors. Wraps HTTP responses and Faraday exceptions. |
+
+**Faraday transport errors**
+
+| Class | Fatal? | Description |
+|---|---|---|
+| `ElastomerClient::Client::TimeoutError` | `false` | Request timed out. Safe to retry. |
+| `ElastomerClient::Client::ConnectionFailed` | `false` | Network connection could not be established. Safe to retry. |
+| `ElastomerClient::Client::ResourceNotFound` | `true` | HTTP 404 — resource does not exist. |
+| `ElastomerClient::Client::ParsingError` | `true` | Response body could not be parsed. |
+| `ElastomerClient::Client::SSLError` | `true` | SSL/TLS handshake failed. |
+| `ElastomerClient::Client::ServerError` | `false` | HTTP 5xx response from Elasticsearch. Safe to retry. |
+| `ElastomerClient::Client::RequestError` | `true` | HTTP 4xx response indicating a bad request. Base class for specific request errors. |
+| `ElastomerClient::Client::RequestSizeError` | `true` | Request body exceeded the allowed size. |
+
+**Specific request errors** (subclasses of `RequestError`)
+
+| Class | Fatal? | Description |
+|---|---|---|
+| `ElastomerClient::Client::IndexNotFoundError` | `true` | The target index does not exist. |
+| `ElastomerClient::Client::QueryParsingError` | `true` | The query DSL could not be parsed by Elasticsearch. |
+| `ElastomerClient::Client::SearchContextMissing` | `true` | A scroll search context has expired or does not exist. |
+| `ElastomerClient::Client::RejectedExecutionError` | `false` | The Elasticsearch thread pool queue is full. Safe to retry with backoff. |
+| `ElastomerClient::Client::DocumentAlreadyExistsError` | `true` | A document with that ID already exists (raised on `op_type: "create"` conflicts). |
+
+**Argument and compatibility errors**
+
+| Class | Fatal? | Description |
+|---|---|---|
+| `ElastomerClient::Client::IllegalArgument` | `true` | A parameter value is invalid or unsupported. |
+| `ElastomerClient::Client::IncompatibleVersionException` | `true` | The operation is not supported by the current Elasticsearch version. |
+
+</Accordion>
+
+---
+
+## Handling specific error types
+
+```ruby
+begin
+  client.docs("orders").get(id: "123")
+
+rescue ElastomerClient::Client::IndexNotFoundError
+  # The index doesn't exist yet — create it or handle gracefully
+  puts "Index not found"
+
+rescue ElastomerClient::Client::TimeoutError
+  # Network timeout — safe to retry
+  puts "Request timed out, retrying..."
+  retry
+
+rescue ElastomerClient::Client::RejectedExecutionError
+  # Cluster thread pool is full — back off and retry
+  sleep 5
+  retry
+
+rescue ElastomerClient::Client::ServerError => err
+  # 5xx from Elasticsearch — may be transient
+  puts "Server error #{err.status}, will retry"
+  retry
+
+rescue ElastomerClient::Client::Error => err
+  # Catch-all for any other client error
+  raise if err.fatal?
+  retry
+end
+```
+
+---
+
+## OpaqueId header mismatch
+
+When you initialize the client with `:opaque_id => true`, ElastomerClient sets a unique `X-Opaque-Id` header on every request and validates that the same value is echoed back in the response. If the headers disagree — which can happen with persistent connections that return stale data from a previous request — ElastomerClient raises an error and **automatically resets the connection** to prevent data leaks.
+
+```ruby
+client = ElastomerClient::Client.new(
+  url:       "http://localhost:9200",
+  adapter:   :net_http_persistent,
+  opaque_id: true
+)
+```
+
+If the `X-Opaque-Id` headers do not match, the middleware raises an `OpaqueIdError` and drops the persistent connection so that the next request starts fresh. You do not need to handle this error specially — the connection reset happens automatically.
+
+<Info>
+  You only need `:opaque_id` when using persistent HTTP adapters (e.g. `:net_http_persistent`). With standard non-persistent connections each request uses a new socket and stale response data is not a concern.
+</Info>
+
+---
+
+## Faraday error wrapping
+
+ElastomerClient wraps low-level Faraday exceptions into its own error hierarchy so you only need to rescue `ElastomerClient::Client::Error` subclasses in application code.
+
+| Faraday exception | ElastomerClient error |
+|---|---|
+| `Faraday::TimeoutError` | `ElastomerClient::Client::TimeoutError` |
+| `Faraday::ConnectionFailed` | `ElastomerClient::Client::ConnectionFailed` |
+| `Faraday::ResourceNotFound` | `ElastomerClient::Client::ResourceNotFound` |
+| `Faraday::ParsingError` | `ElastomerClient::Client::ParsingError` |
+| `Faraday::SSLError` | `ElastomerClient::Client::SSLError` |
+| HTTP 5xx response | `ElastomerClient::Client::ServerError` |
+| HTTP 4xx response | `ElastomerClient::Client::RequestError` (or a subclass) |

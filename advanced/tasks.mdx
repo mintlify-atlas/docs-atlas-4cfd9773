@@ -1,0 +1,231 @@
+---
+title: "Tasks"
+description: "Inspect and manage long-running Elasticsearch tasks"
+---
+
+The Tasks API gives you visibility into operations running inside the Elasticsearch cluster — reindex jobs, bulk operations, long-running searches, and more. You can list tasks, filter by node or action, wait for completion, and cancel tasks that are no longer needed.
+
+## Accessing the tasks object
+
+`client.tasks` returns a `Tasks` instance:
+
+```ruby
+tasks = client.tasks
+```
+
+All task methods are called on this object.
+
+## Listing tasks
+
+### `tasks.get`
+
+Fetch all active tasks on the cluster:
+
+```ruby
+response = tasks.get
+response["nodes"].each do |node_id, node|
+  node["tasks"].each do |task_id, task|
+    puts "#{node_id}:#{task["id"]} — #{task["action"]} (#{task["running_time_in_nanos"] / 1_000_000}ms)"
+  end
+end
+```
+
+Filter by node, action pattern, or request detail level:
+
+```ruby
+# All reindex tasks across the cluster, with extra detail
+tasks.get(
+  actions:  "*reindex",
+  detailed: true
+)
+
+# Only tasks on specific nodes
+tasks.get(
+  nodes:   "DmteLdw1QmSgW3GZmjmoKA,DmteLdw1QmSgW3GZmjmoKB",
+  actions: "cluster:*"
+)
+
+# Group by parent task (ES 5+)
+tasks.get(group_by: "parents")
+```
+
+<ParamField query="actions" type="string">
+  Wildcard pattern to filter tasks by action name. Examples: `"*reindex"`, `"*search"`, `"cluster:*"`.
+</ParamField>
+
+<ParamField query="nodes" type="string">
+  Comma-separated list of node IDs to restrict results to specific cluster nodes.
+</ParamField>
+
+<ParamField query="detailed" type="boolean" default="false">
+  When `true`, includes additional status information such as the request body and description.
+</ParamField>
+
+<ParamField query="group_by" type="string" default='"nodes"'>
+  Grouping strategy for the response. Use `"parents"` to see tasks in a parent/child hierarchy.
+</ParamField>
+
+## Getting a specific task
+
+### `tasks.get_by_id`
+
+Fetch details for a single task identified by its node ID and numeric task ID:
+
+```ruby
+node_id = "DmteLdw1QmSgW3GZmjmoKA"
+task_id = 12345   # must be an Integer
+
+result = tasks.get_by_id(node_id, task_id)
+
+task   = result["task"]
+status = task["status"]
+
+puts task["action"]           # => "indices:data/write/reindex"
+puts task["running_time_in_nanos"]
+puts status["created"]        # documents created so far
+puts status["total"]          # total documents to process
+```
+
+<Note>
+  The task ID must be an `Integer`. The node ID and task ID together uniquely identify a task in the cluster.
+</Note>
+
+### `tasks.get_by_parent_id`
+
+Fetch all child tasks of a given parent task:
+
+```ruby
+tasks.get_by_parent_id("DmteLdw1QmSgW3GZmjmoKA", 12345)
+```
+
+## Waiting for tasks
+
+### `tasks.wait_for`
+
+Block until tasks matching a filter complete, or until a timeout expires:
+
+```ruby
+# Wait up to 30 seconds for all reindex tasks to finish
+result = tasks.wait_for("30s", actions: "*reindex")
+```
+
+### `tasks.wait_by_id`
+
+Wait for a specific task to complete:
+
+```ruby
+result = tasks.wait_by_id("DmteLdw1QmSgW3GZmjmoKA", 12345, "60s")
+puts result["completed"]  # => true
+```
+
+<Warning>
+  `wait_for` and `wait_by_id` are blocking calls. For long-running tasks, prefer polling with `get_by_id` in a loop (see the complete example below) rather than holding a connection open for an extended period.
+</Warning>
+
+## Cancelling tasks
+
+### `tasks.cancel_by_id`
+
+Cancel a specific task by node and task ID:
+
+```ruby
+tasks.cancel_by_id("DmteLdw1QmSgW3GZmjmoKA", 12345)
+```
+
+### `tasks.cancel`
+
+Cancel tasks matching filter params:
+
+```ruby
+# Cancel all reindex tasks
+tasks.cancel(actions: "*reindex")
+
+# Cancel all tasks on specific nodes
+tasks.cancel(
+  actions: "*reindex",
+  nodes:   "DmteLdw1QmSgW3GZmjmoKA,DmteLdw1QmSgW3GZmjmoKB"
+)
+
+# Cancel a specific task by its composite ID
+tasks.cancel(task_id: "DmteLdw1QmSgW3GZmjmoKA:12345")
+```
+
+<Warning>
+  Cancellation is best-effort. Elasticsearch will attempt to stop the task at its next safe cancellation point, which may not be immediate.
+</Warning>
+
+## Common use cases
+
+<CardGroup cols={2}>
+  <Card title="Monitor reindex progress" icon="chart-line">
+    Poll a reindex task until completion to track how many documents have been copied.
+  </Card>
+  <Card title="Cancel runaway operations" icon="circle-stop">
+    Cancel a reindex or bulk operation that is consuming too many resources.
+  </Card>
+  <Card title="Audit cluster activity" icon="list-check">
+    List all active tasks filtered by action pattern to see what the cluster is currently doing.
+  </Card>
+  <Card title="Wait for completion" icon="clock">
+    Block until a background task finishes before proceeding with dependent operations.
+  </Card>
+</CardGroup>
+
+## Complete example — polling a reindex task
+
+```ruby
+require "elastomer_client"
+
+client  = ElastomerClient::Client.new(url: "http://localhost:9200")
+reindex = client.reindex
+tasks   = client.tasks
+
+# Start an async reindex
+response = reindex.reindex(
+  {
+    source: { index: "orders-2024" },
+    dest:   { index: "orders-2024-v2" }
+  },
+  wait_for_completion: false
+)
+
+task_id        = response["task"]             # e.g. "DmteLdw1QmSgW3GZmjmoKA:9821"
+node_id, tid   = task_id.split(":")
+tid            = tid.to_i
+
+puts "Reindex started — task #{task_id}"
+puts "─" * 50
+
+loop do
+  info   = tasks.get_by_id(node_id, tid, detailed: true)
+  status = info.dig("task", "status") || {}
+
+  total     = status["total"]     || 0
+  created   = status["created"]   || 0
+  updated   = status["updated"]   || 0
+  deleted   = status["deleted"]   || 0
+  conflicts = status["version_conflicts"] || 0
+
+  pct = total > 0 ? (((created + updated + deleted).to_f / total) * 100).round(1) : 0
+  puts "[#{Time.now.strftime("%H:%M:%S")}] #{pct}% — " \
+       "created=#{created} updated=#{updated} conflicts=#{conflicts} total=#{total}"
+
+  if info["completed"]
+    response = info["response"] || {}
+    puts "─" * 50
+    puts "Reindex complete."
+    puts "  Total:     #{response["total"]}"
+    puts "  Created:   #{response["created"]}"
+    puts "  Updated:   #{response["updated"]}"
+    puts "  Failures:  #{Array(response["failures"]).size}"
+    break
+  end
+
+  sleep 5
+rescue Interrupt
+  puts "\nCancelling task #{task_id}..."
+  tasks.cancel_by_id(node_id, tid)
+  puts "Cancelled."
+  break
+end
+```

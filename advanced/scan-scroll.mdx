@@ -1,0 +1,175 @@
+---
+title: "Scan & Scroll"
+description: "Paginate through large result sets using Elasticsearch scroll queries"
+---
+
+Scroll queries let you iterate over a result set that is too large to return in a single response. Elasticsearch maintains a search context on the cluster for the duration of the scroll — a lightweight snapshot of the query state — and you page through results by repeatedly fetching the next batch.
+
+ElastomerClient provides a `Scroller` abstraction that manages the scroll lifecycle (starting, continuing, and clearing the context) automatically.
+
+## `client.scroll`
+
+Creates a `Scroller` that pages through results while preserving any `sort` you define:
+
+```ruby
+scroller = client.scroll(
+  { query: { match: { author: "Martin Fowler" } }, sort: [{ year: { order: "asc" } }] },
+  index:  "books",
+  scroll: "2m",
+  size:   100
+)
+```
+
+## `client.scan`
+
+Creates a `Scroller` that sorts results by `_doc` (internal storage order) for maximum throughput. Use this when document order does not matter:
+
+```ruby
+scroller = client.scan(
+  { query: { match_all: {} } },
+  index:  "books",
+  scroll: "5m",
+  size:   200
+)
+```
+
+<Note>
+  `scan` automatically injects `sort: [:_doc]` into the query. Passing a query that already contains a `sort` key will raise an `ArgumentError`.
+</Note>
+
+## Options
+
+<ParamField query="index" type="string">
+  Name of the index (or comma-separated list of indices) to search.
+</ParamField>
+
+<ParamField query="type" type="string">
+  Document type to search. Ignored on Elasticsearch 8+.
+</ParamField>
+
+<ParamField query="scroll" type="string" default="5m">
+  Keep-alive duration for the scroll context, e.g. `"1m"`, `"5m"`, `"10m"`. The clock resets on every scroll fetch, so this is the time Elasticsearch waits between consecutive calls before expiring the context.
+</ParamField>
+
+<ParamField query="size" type="number" default="50">
+  Number of documents **per shard** to return in each scroll batch. Total documents per fetch = `size × number_of_shards`.
+</ParamField>
+
+<Warning>
+  Open scroll contexts hold resources on the Elasticsearch cluster. Always let the `Scroller` finish iterating (it calls `clear_scroll` automatically on completion) or call `scroller.clear!` explicitly if you break out of a loop early.
+</Warning>
+
+## Iterating results
+
+### `each_document`
+
+The simplest iteration — yields one document hash at a time:
+
+```ruby
+scroller.each_document do |doc|
+  puts doc["_id"]
+  puts doc["_source"]["title"]
+end
+```
+
+### `each` (batch iteration)
+
+Yields a hits hash for each scroll batch. Useful when you want to process documents in groups:
+
+```ruby
+scroller.each do |hits|
+  puts "Batch offset: #{hits["offset"]} / #{hits["total"]["value"]}"
+  hits["hits"].each do |doc|
+    process(doc)
+  end
+end
+```
+
+The hits hash contains:
+
+| Key | Type | Description |
+|---|---|---|
+| `"hits"` | Array | Array of document hashes in this batch |
+| `"total"` | Hash | `{ "value" => N, "relation" => "eq" }` — total matching documents |
+| `"offset"` | Integer | Number of documents yielded so far across all batches |
+
+## How scroll context works
+
+<Steps>
+  <Step title="Initial request">
+    The first call opens the search context on the cluster and returns the first batch of results along with a `_scroll_id`. The keep-alive timer starts.
+  </Step>
+  <Step title="Subsequent fetches">
+    Each subsequent call passes the `_scroll_id` to `/_search/scroll`. Elasticsearch returns the next batch and issues a new `_scroll_id`. The keep-alive timer resets.
+  </Step>
+  <Step title="Completion">
+    When a fetch returns an empty hits array, the iteration ends. `Scroller` calls `clear_scroll` automatically to release the server-side context.
+  </Step>
+</Steps>
+
+## Differences between `scroll` and `scan`
+
+| Feature | `client.scroll` | `client.scan` |
+|---|---|---|
+| Sort order | Respects any `sort` in the query | Forces `sort: [:_doc]` (storage order) |
+| Use case | Ordered pagination, replaying a sorted result set | Full index export, reindex pipelines |
+| Performance | Slightly more overhead due to sorting | Most efficient — no sort computation |
+| Custom sort | Supported | Not supported (raises `ArgumentError`) |
+
+## Low-level scroll API
+
+For cases where you need direct control, the underlying methods are also available:
+
+```ruby
+# Start a scroll manually
+body = client.start_scroll(
+  body:   { query: { match_all: {} } },
+  index:  "books",
+  scroll: "5m",
+  size:   100
+)
+scroll_id = body["_scroll_id"]
+body["hits"]["hits"].each { |doc| process(doc) }
+
+# Fetch subsequent pages
+loop do
+  body      = client.continue_scroll(scroll_id, "5m")
+  scroll_id = body["_scroll_id"]
+  hits      = body["hits"]["hits"]
+  break if hits.empty?
+  hits.each { |doc| process(doc) }
+end
+
+# Clean up
+client.clear_scroll(scroll_id)
+```
+
+## Complete example
+
+```ruby
+require "elastomer_client"
+
+client = ElastomerClient::Client.new(url: "http://localhost:9200")
+
+# Export all documents from the "books" index
+exported = 0
+
+scroller = client.scan(
+  { query: { match_all: {} } },
+  index:  "books",
+  scroll: "5m",
+  size:   500
+)
+
+scroller.each_document do |doc|
+  # Write each document to an output file, queue, etc.
+  puts JSON.dump(doc["_source"].merge("_id" => doc["_id"]))
+  exported += 1
+end
+
+puts "Exported #{exported} documents"
+```
+
+<Tip>
+  For bulk reindexing use cases prefer the dedicated [Reindex API](/advanced/reindex) which runs entirely server-side and avoids transferring every document through your application.
+</Tip>

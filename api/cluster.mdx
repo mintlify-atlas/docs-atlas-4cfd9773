@@ -1,0 +1,308 @@
+---
+title: "Cluster"
+description: "Monitor and manage your Elasticsearch cluster health, state, and settings"
+---
+
+The `Cluster` class provides access to cluster-wide Elasticsearch API commands: health, state, settings, pending tasks, aliases, and rerouting.
+
+## Getting a Cluster instance
+
+```ruby
+cluster = client.cluster
+```
+
+The instance is memoised on the client — subsequent calls to `client.cluster` return the same object.
+
+---
+
+## Health
+
+### `health(params = {})`
+
+Returns the health status of the cluster or a specific index:
+
+```ruby
+cluster.health
+#=> {
+#     "cluster_name" => "my-cluster",
+#     "status"       => "green",
+#     "timed_out"    => false,
+#     "number_of_nodes"        => 3,
+#     "number_of_data_nodes"   => 3,
+#     "active_primary_shards"  => 15,
+#     "active_shards"          => 30,
+#     "relocating_shards"      => 0,
+#     "initializing_shards"    => 0,
+#     "unassigned_shards"      => 0,
+#     ...
+#   }
+```
+
+<Tabs>
+  <Tab title="Cluster level">
+    ```ruby
+    cluster.health(level: "cluster")
+    ```
+  </Tab>
+  <Tab title="Index level">
+    ```ruby
+    cluster.health(level: "indices")
+    ```
+  </Tab>
+  <Tab title="Shard level">
+    ```ruby
+    cluster.health(level: "shards")
+    ```
+  </Tab>
+  <Tab title="Wait for green">
+    ```ruby
+    # Block until the cluster is green or 10 seconds elapse
+    cluster.health(
+      wait_for_status: "green",
+      timeout:         "10s",
+      read_timeout:    12
+    )
+    ```
+  </Tab>
+</Tabs>
+
+<ParamField path="params.index" type="string | string[]">
+  Scope the health check to one or more indices.
+</ParamField>
+
+<ParamField path="params.level" type="string" default="cluster">
+  Granularity of the response: `"cluster"`, `"indices"`, or `"shards"`.
+</ParamField>
+
+<ParamField path="params.wait_for_status" type="string">
+  Block until the cluster reaches `"green"`, `"yellow"`, or `"red"`.
+</ParamField>
+
+<ParamField path="params.wait_for_nodes" type="string | number">
+  Block until at least N nodes are available.
+</ParamField>
+
+<ParamField path="params.wait_for_relocating_shards" type="number">
+  Block until this many relocating shards remain.
+</ParamField>
+
+<ParamField path="params.timeout" type="string" default="30s">
+  How long Elasticsearch should wait before returning a timed-out response.
+</ParamField>
+
+---
+
+## State
+
+### `state(params = {})`
+
+Returns comprehensive cluster state: nodes, routing tables, metadata, indices, and blocks.
+
+```ruby
+cluster.state
+#=> { "cluster_name" => "...", "master_node" => "...", "nodes" => { ... }, ... }
+
+# Filter to specific metrics
+cluster.state(metrics: "metadata")
+cluster.state(metrics: %w[nodes routing_table])
+
+# Filter to specific indices
+cluster.state(metrics: "metadata", indices: "blog")
+cluster.state(indices: %w[blog users])
+```
+
+<ParamField path="params.metrics" type="string | string[]">
+  One or more of: `version`, `master_node`, `nodes`, `routing_table`,
+  `metadata`, `blocks`. Omit to return all metrics.
+</ParamField>
+
+<ParamField path="params.indices" type="string | string[]">
+  Limit state to one or more index names.
+</ParamField>
+
+---
+
+## Stats
+
+### `stats(params = {})`
+
+Returns cluster-wide index metrics (shard counts, store size) and node information (count, OS, JVM):
+
+```ruby
+cluster.stats
+#=> {
+#     "cluster_name"   => "my-cluster",
+#     "status"         => "green",
+#     "indices"        => { "count" => 12, "shards" => { ... }, "docs" => { ... }, ... },
+#     "nodes"          => { "count" => { "total" => 3 }, "jvm" => { ... }, ... },
+#     ...
+#   }
+```
+
+---
+
+## Pending tasks
+
+### `pending_tasks(params = {})`
+
+Lists cluster-level changes not yet applied:
+
+```ruby
+cluster.pending_tasks
+#=> { "tasks" => [ { "source" => "create-index [test]", "priority" => "HIGH", ... } ] }
+```
+
+### `pending_tasks?`
+
+Returns `true` if there are pending tasks, `false` if the list is empty, and `nil` if the response does not contain a `"tasks"` key.
+
+```ruby
+cluster.pending_tasks?  #=> false
+```
+
+---
+
+## Settings
+
+### `get_settings(params = {})` / `settings(params = {})`
+
+Returns cluster-wide settings that have been changed via the update API:
+
+```ruby
+cluster.get_settings
+#=> {
+#     "persistent"  => { ... },
+#     "transient"   => { ... },
+#     "defaults"    => { ... }
+#   }
+```
+
+### `update_settings(body, params = {})`
+
+Updates cluster-wide settings. Use `persistent` for changes that survive restarts; use `transient` for temporary changes:
+
+```ruby
+# Transient — reset on full cluster restart
+cluster.update_settings(
+  transient: {
+    "cluster.routing.allocation.enable" => "none"
+  }
+)
+
+# Persistent — survives restarts
+cluster.update_settings(
+  persistent: {
+    "indices.recovery.max_bytes_per_sec" => "40mb"
+  }
+)
+```
+
+<ParamField path="body.persistent" type="object">
+  Settings to apply permanently (survive full cluster restart).
+</ParamField>
+
+<ParamField path="body.transient" type="object">
+  Settings to apply temporarily (reset on full cluster restart).
+</ParamField>
+
+---
+
+## Rerouting
+
+### `reroute(commands, params = {})`
+
+Explicitly moves, allocates, or cancels shard assignments:
+
+```ruby
+# Move a shard
+cluster.reroute(
+  move: { index: "blog", shard: 0, from_node: "node-1", to_node: "node-2" }
+)
+
+# Multiple commands at once
+cluster.reroute([
+  { move:     { index: "blog", shard: 0, from_node: "node-1", to_node: "node-2" } },
+  { allocate: { index: "blog", shard: 1, node: "node-3" } }
+])
+
+# Pre-wrapped in a :commands key
+cluster.reroute(
+  commands: [
+    { cancel: { index: "blog", shard: 2, node: "node-1" } }
+  ]
+)
+```
+
+<Warning>
+  Rerouting affects shard placement and cluster recovery. Use with care in
+  production environments.
+</Warning>
+
+---
+
+## Aliases
+
+### `get_aliases(params = {})` / `aliases(params = {})`
+
+Returns all index aliases visible from the cluster:
+
+```ruby
+cluster.get_aliases
+cluster.get_aliases(index: "blog")
+cluster.get_aliases(name: "blog-*")
+```
+
+<ParamField path="params.index" type="string | string[]">
+  Limit results to specific indices.
+</ParamField>
+
+<ParamField path="params.name" type="string | string[]">
+  Limit results to specific alias names (supports wildcards).
+</ParamField>
+
+### `update_aliases(actions, params = {})`
+
+Atomically adds and removes aliases in a single operation:
+
+```ruby
+# Single action
+cluster.update_aliases(add: { index: "blog-v2", alias: "blog" })
+
+# Atomic swap (remove old, add new)
+cluster.update_aliases([
+  { remove: { index: "blog-v1", alias: "blog" } },
+  { add:    { index: "blog-v2", alias: "blog" } }
+])
+```
+
+---
+
+## Convenience accessors
+
+These methods are thin wrappers around `state` that extract a specific section from the response.
+
+### `templates`
+
+```ruby
+cluster.templates
+#=> { "my-template" => { "order" => 0, "index_patterns" => [...], ... } }
+```
+
+### `indices`
+
+```ruby
+cluster.indices
+#=> { "blog" => { "state" => "open", "settings" => { ... }, ... } }
+```
+
+### `nodes`
+
+```ruby
+cluster.nodes
+#=> { "node-id-1" => { "name" => "node-1", "transport_address" => "...", ... } }
+```
+
+<Note>
+  For detailed node statistics use `client.nodes.info` and
+  `client.nodes.stats`. See [Nodes](/api/nodes).
+</Note>
